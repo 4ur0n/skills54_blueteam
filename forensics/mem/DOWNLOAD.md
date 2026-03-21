@@ -4,10 +4,8 @@
 
 **[Google Drive 下載連結](https://drive.google.com/file/d/1P37vYC1K0UPOlBemiKDfPLAIop23j6cp/view?usp=sharing)**
 
-下載後解壓放到此目錄：
+下載後放到此目錄：
 
 ```
 forensics/mem/memory.dmp
 ```
-
-> 解壓密碼：`cyberdefenders.org`

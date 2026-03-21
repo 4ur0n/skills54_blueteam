@@ -72,4 +72,4 @@ memory.dmp（4.1GB）太大無法放在 Git，請從以下連結下載：
 forensics/mem/memory.dmp
 ```
 
-> 來源：CyberDefenders Ramnit Challenge（解壓密碼：cyberdefenders.org）
+> 來源：CyberDefenders Ramnit Challenge
