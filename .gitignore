@@ -1,0 +1,12 @@
+# Large files
+forensics/mem/memory.dmp
+forensics/mem/*.dmp
+forensics/mem/*.mem
+forensics/mem/*.raw
+
+# Python
+__pycache__/
+*.pyc
+
+# Docker
+.env

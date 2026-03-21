@@ -1,0 +1,34 @@
+version: '3.8'
+
+networks:
+  sec_net:
+    driver: bridge
+
+services:
+  platform:
+    build: ./platform
+    container_name: sec_platform
+    ports:
+      - "5000:5000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - sec_net
+    restart: unless-stopped
+    depends_on:
+      - challenge
+
+  challenge:
+    build: ./challenge
+    container_name: sec_challenge
+    ports:
+      - "2221:22"    # SSH（保留供題目測試用）
+      - "8080:80"    # Web — http://localhost:8080
+      - "8443:443"   # HTTPS — https://localhost:8443
+      - "8181:8081"  # Nginx — http://localhost:8181
+    networks:
+      - sec_net
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>檔案上傳測試</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 60px auto; background: #f0f2f5; }
+    .card { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+    button { background: #4a90e2; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; }
+    .vuln-note { background: #fff3cd; color: #856404; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: .9rem; }
+    #result { margin-top: 15px; padding: 12px; border-radius: 6px; display: none; }
+    .success { background: #d4edda; color: #155724; }
+    .error   { background: #f8d7da; color: #721c24; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>📂 檔案上傳功能（題目 3）</h2>
+    <div class="vuln-note">⚠ 此上傳介面目前未對檔案類型進行驗證，請修復 <code>/var/www/html/upload.php</code></div>
+    <input type="file" id="fileInput"><br><br>
+    <button onclick="uploadFile()">上傳</button>
+    <div id="result"></div>
+  </div>
+  <script>
+    async function uploadFile() {
+      const file = document.getElementById('fileInput').files[0];
+      if (!file) { alert('請先選擇檔案'); return; }
+      const form = new FormData();
+      form.append('file', file);
+      const resp = await fetch('/upload.php', { method: 'POST', body: form });
+      const data = await resp.json();
+      const el = document.getElementById('result');
+      el.style.display = 'block';
+      if (data.success) {
+        el.className = 'success';
+        el.innerHTML = `✅ 上傳成功：<a href="${data.url}" target="_blank">${data.filename}</a>`;
+      } else {
+        el.className = 'error';
+        el.textContent = '❌ ' + (data.error || '上傳失敗');
+      }
+    }
+  </script>
+</body>
+</html>
