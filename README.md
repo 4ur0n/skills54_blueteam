@@ -5,12 +5,12 @@
 ## 目錄結構
 
 ```
-security_hardening/
+skills54_blueteam/
 ├── challenge/          # 安全強化容器（單容器，23 題全在裡面）
 ├── platform/           # Web 驗證平台（Flask）
 ├── forensics/
 │   ├── network/        # 封包鑑識（Task_practice.pcapng）
-│   └── mem/            # 記憶體鑑識（memory.dmp, 4.1GB）
+│   └── mem/            # 記憶體鑑識（需下載 memory.dmp）
 ├── solve_all.sh        # 一鍵/指定解題腳本
 ├── clean.sh            # 重置容器至漏洞狀態
 ├── NOTES.md            # 完整解題筆記
@@ -54,12 +54,22 @@ docker exec -it sec_challenge bash
 
 ## 鑑識練習檔案
 
-```bash
-# 封包（用 Wireshark 開，已包含在 repo）
-forensics/network/Task_practice.pcapng
+### 封包分析（已包含在 repo）
 
-# 記憶體（需自行下載，4.1GB）
-# 來源：CyberDefenders Ramnit challenge
-# https://cyberdefenders.org/blueteam-ctf-challenges/159#nav-overview
-# 下載後解壓到 forensics/mem/memory.dmp
+```bash
+forensics/network/Task_practice.pcapng    # 用 Wireshark 開啟
 ```
+
+### 記憶體分析（需下載）
+
+memory.dmp（4.1GB）太大無法放在 Git，請從以下連結下載：
+
+**[Google Drive 下載連結](https://drive.google.com/file/d/1P37vYC1K0UPOlBemiKDfPLAIop23j6cp/view?usp=sharing)**
+
+下載後放到：
+
+```bash
+forensics/mem/memory.dmp
+```
+
+> 來源：CyberDefenders Ramnit Challenge（解壓密碼：cyberdefenders.org）

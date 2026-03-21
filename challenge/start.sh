@@ -14,6 +14,10 @@ passwd -d phantom        # 清空密碼（題目 15 漏洞）
 sed -i 's/^session\s*required\s*pam_loginuid.so/session optional pam_loginuid.so/' \
     /etc/pam.d/sshd 2>/dev/null || true
 
+# ── 確保 /usr/sbin 在 PATH 中（讓 visudo 等指令可直接使用）──
+export PATH=$PATH:/usr/sbin
+echo 'export PATH=$PATH:/usr/sbin' >> /etc/bash.bashrc
+
 # ── 啟動服務 ─────────────────────────────────────────────────
 echo "[*] Starting SSH..."
 service ssh start || /usr/sbin/sshd

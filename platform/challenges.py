@@ -782,7 +782,7 @@ def verify_challenge_16(container):
 
 def verify_challenge_17(container):
     checks = {}
-    out, _ = docker_exec('grep -h webadmin /etc/sudoers /etc/sudoers.d/* 2>/dev/null')
+    out, _ = docker_exec('grep -h webadmin /etc/sudoers /etc/sudoers.d/* 2>/dev/null | grep -v "^\\s*#"')
     checks['目標帳號已建立 sudo 授權規則'] = 'webadmin' in out
     checks['執行特權指令時需要驗證身份'] = 'webadmin' in out and 'NOPASSWD' not in out
     checks['授權範圍已限縮至特定指令'] = bool(

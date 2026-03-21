@@ -1,8 +1,8 @@
-# Large files
-forensics/mem/memory.dmp
-forensics/mem/*.dmp
-forensics/mem/*.mem
-forensics/mem/*.raw
+# Memory dumps (too large for git, use Google Drive link in README)
+*.dmp
+*.mem
+*.raw
+*.vmem
 
 # Python
 __pycache__/
