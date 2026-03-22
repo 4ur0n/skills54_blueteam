@@ -71,7 +71,7 @@ FORENSICS_ANSWERS = {
 MEMORY_ANSWERS = {
     1:  {'answer': 'windows 10', 'title': '作業系統', 'points': 2,
          'hint': '使用 windows.info 或 registry.printkey 查看',
-         'format': '例：Windows 7、Windows 10、Windows Server 2019'},
+         'format': '例：Windows 10、Windows 10 Pro、Windows Server 2019'},
     2:  {'answer': 'DESKTOP-8BINKVB', 'title': '電腦名稱', 'points': 3,
          'hint': '使用 windows.envars 搜尋 COMPUTERNAME',
          'format': '例：WIN-XXXXXX'},
