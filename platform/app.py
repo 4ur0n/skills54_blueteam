@@ -96,9 +96,10 @@ MEMORY_ANSWERS = {
     9:  {'answer': 'sk54{r4mn1t_m3m0ry_f0r3ns1cs_2025}', 'title': '使用掃描工具找出記憶體中的特徵碼（FLAG）', 'points': 6,
          'hint': '使用 regexscan.RegExScan 或 strings + grep 搜尋 sk54{ 開頭的字串',
          'format': '格式：sk54{...}'},
-    10: {'answer': 'Windows 10 Enterprise Evaluation', 'title': '透過 Registry 查詢完整的作業系統版本名稱', 'points': 4,
-         'hint': '使用 windows.registry.printkey 查詢 Microsoft\\Windows NT\\CurrentVersion 的 ProductName',
-         'format': '例：Windows 10 Pro、Windows Server 2019 Standard'},
+    10: {'answer': ['Windows 10 Enterprise Evaluation', '22H2', '19045', '10', '2006'],
+         'title': '透過 Registry 查詢完整的作業系統版本資訊', 'points': 4, 'multi': True,
+         'hint': '使用 windows.registry.printkey 查詢 Microsoft\\Windows NT\\CurrentVersion，找出 ProductName、DisplayVersion、CurrentBuildNumber、CurrentMajorVersionNumber、UBR',
+         'format': '格式：ProductName / DisplayVersion / CurrentBuildNumber / CurrentMajorVersion / UBR'},
 }
 
 
