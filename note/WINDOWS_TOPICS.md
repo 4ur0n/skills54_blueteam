@@ -1,6 +1,7 @@
 # Windows Server / AD 安全強化題單
 
 > 歷屆考過 + 預測可能出的題目，依優先度排序
+> 以 GUI 操作為主，PowerShell 僅供驗證
 
 ---
 
@@ -8,153 +9,181 @@
 
 ### 1. 密碼策略（每年都考）
 
-`gpedit.msc` → 電腦設定 → Windows 設定 → 安全性設定 → 帳戶原則 → 密碼原則
+**開啟方式**：`Win+R` → `gpedit.msc`
 
-| 項目 | 53屆設定 | 建議值 |
-|------|----------|--------|
-| 密碼必須符合複雜性需求 | 已啟用 | 已啟用 |
-| 密碼最長使用期限 | 90 天 | 60-90 天 |
-| 密碼最短使用期限 | 0 天 | 1 天 |
-| 強制密碼歷程記錄 | 5 組 | 5-24 組 |
-| 密碼最小長度 | 8 字元 | 8-16 字元 |
-| 使用可還原加密來存放密碼 | 停用 | 停用 |
+**路徑**：電腦設定 → Windows 設定 → 安全性設定 → 帳戶原則 → **密碼原則**
 
-```powershell
-# 查看目前密碼策略
-net accounts
-# 或
-secedit /export /cfg C:\secpol.cfg
-```
+| 項目 | 雙擊後設定 | 說明 |
+|------|------------|------|
+| 密碼必須符合複雜性需求 | 已啟用 | 大小寫+數字+特殊字元 |
+| 密碼最長使用期限 | 90 天 | 強制定期換密碼 |
+| 密碼最短使用期限 | 0 天（或 1 天） | 防止馬上換回舊密碼 |
+| 強制密碼歷程記錄 | 5 組 | 不能重複用最近 5 組密碼 |
+| 密碼最小長度 | 8-16 字元 | 依題目要求 |
+| 使用可還原加密來存放密碼 | 停用 | 明文儲存密碼，絕對不開 |
+
+**驗證**：`Win+R` → `cmd` → `net accounts`
+
+---
 
 ### 2. 帳戶鎖定原則（每年都考）
 
-`gpedit.msc` → 帳戶原則 → 帳戶鎖定原則
+**路徑**：`gpedit.msc` → 帳戶原則 → **帳戶鎖定原則**
 
-| 項目 | 53屆設定 | 建議值 |
-|------|----------|--------|
-| 帳戶鎖定閾值 | 3 次 | 3-5 次 |
-| 帳戶鎖定時間 | 60 分鐘 | 30-60 分鐘 |
-| 重設帳戶鎖定計數器 | 60 分鐘 | 30-60 分鐘 |
+| 項目 | 雙擊後設定 | 說明 |
+|------|------------|------|
+| 帳戶鎖定閾值 | 3 次 | 連續 3 次錯誤就鎖 |
+| 帳戶鎖定時間 | 60 分鐘 | 鎖定持續時間 |
+| 重設帳戶鎖定計數器 | 60 分鐘 | 幾分鐘後重新計算 |
+
+> 注意：要先設「閾值」，其他兩個才能設定
+
+---
 
 ### 3. 安全性選項（53屆考過）
 
-`gpedit.msc` → 本機原則 → 安全性選項
+**路徑**：`gpedit.msc` → 本機原則 → **安全性選項**
 
-| 項目 | 53屆設定 | 說明 |
-|------|----------|------|
-| 互動式登入：不要求 CTRL+ALT+DEL | 停用 | 強制安全登入序列 |
-| 互動式登入：不要顯示上次使用者名稱 | 停用 | 不洩漏帳號名 |
-| 互動式登入：到期前提示變更密碼 | 10 天 | 預先警告 |
+往下捲找到「互動式登入」相關的：
+
+| 項目 | 雙擊後設定 | 說明 |
+|------|------------|------|
+| 互動式登入：不要求 CTRL+ALT+DEL | **停用** | 停用 = 要求按 CTRL+ALT+DEL 才能登入 |
+| 互動式登入：不要顯示上次登入的使用者名稱 | **已啟用** | 不洩漏帳號名 |
+| 互動式登入：到期前提示使用者變更密碼 | **10 天** | 密碼快過期時提醒 |
+
+> 注意名稱裡的「不要求」「不要顯示」是雙重否定，小心搞反
+
+---
 
 ### 4. SMB2 安全（53屆、54屆考過）
 
-nmap 掃描發現 "Message signing enabled but not required" → 需修復
+**路徑**：`gpedit.msc` → 本機原則 → 安全性選項
 
-```powershell
-# 啟用 SMB signing（強制簽名）
-Set-SmbServerConfiguration -RequireSecuritySignature $true -Force
-
-# 或用群組原則
-# gpedit.msc → 本機原則 → 安全性選項
-# Microsoft 網路伺服器：數位簽章通訊（自動）→ 已啟用
-# Microsoft 網路用戶端：數位簽章通訊（自動）→ 已啟用
-
-# 停用 SMBv1（已知不安全）
-Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -NoRestart
-Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force
-
-# 驗證
-Get-SmbServerConfiguration | Select EnableSMB1Protocol, RequireSecuritySignature
-```
-
-### 5. 稽核策略（52屆、55屆考過）
-
-`gpedit.msc` → 本機原則 → 稽核原則
-
-| 項目 | 建議值 |
-|------|--------|
-| 稽核帳戶登入事件 | 成功、失敗 |
-| 稽核帳戶管理 | 成功、失敗 |
-| 稽核登入事件 | 成功、失敗 |
-| 稽核物件存取 | 成功、失敗 |
-| 稽核原則變更 | 成功、失敗 |
-| 稽核特殊權限使用 | 成功、失敗 |
-| 稽核系統事件 | 成功、失敗 |
-
-```powershell
-# 一次全開
-auditpol /set /category:* /success:enable /failure:enable
-
-# 查看目前設定
-auditpol /get /category:*
-
-# 查看特定事件（52屆考的）
-# 事件 4688 = 程序建立
-Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4688} | Measure-Object
-
-# 查看登入失敗事件（事件 4625）
-Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4625} |
-    Where-Object { $_.TimeCreated -ge '2025-03-28' } | Measure-Object
-```
-
-### 6. Windows 防火牆（55屆考過）
-
-```powershell
-# 啟用所有設定檔的防火牆
-Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True
-
-# 預設拒絕入站
-Set-NetFirewallProfile -DefaultInboundAction Block -DefaultOutboundAction Allow
-
-# 允許特定 IP 網段
-New-NetFirewallRule -DisplayName "Allow LAN" -Direction Inbound `
-    -RemoteAddress 192.168.10.0/24 -Action Allow
-
-# 允許 RDP
-New-NetFirewallRule -DisplayName "Allow RDP" -Direction Inbound `
-    -Protocol TCP -LocalPort 3389 -Action Allow
-
-# 擋特定 port
-New-NetFirewallRule -DisplayName "Block Telnet" -Direction Inbound `
-    -Protocol TCP -LocalPort 23 -Action Block
-
-# 查看規則
-Get-NetFirewallRule | Where-Object {$_.Enabled -eq 'True'} |
-    Select DisplayName, Direction, Action
-
-# netsh 指令（傳統方式）
-netsh advfirewall set allprofiles state on
-netsh advfirewall firewall add rule name="Block Telnet" dir=in protocol=tcp localport=23 action=block
-netsh advfirewall show allprofiles
-```
-
-### 7. Windows Installer 原則（53屆考過）
-
-`gpedit.msc` → 電腦設定 → 系統管理範本 → Windows 元件 → Windows Installer
+找到 **Microsoft 網路** 開頭的：
 
 | 項目 | 設定 |
 |------|------|
-| 禁止移除更新 | 已啟用 |
+| Microsoft 網路伺服器：數位簽章通訊（自動） | **已啟用** |
+| Microsoft 網路用戶端：數位簽章通訊（自動） | **已啟用** |
+
+**停用 SMBv1**：
+
+方法一（GUI）：
+1. `Win+R` → `appwiz.cpl` → 左邊「開啟或關閉 Windows 功能」
+2. 找到 **SMB 1.0/CIFS File Sharing Support** → **取消勾選** → 確定
+
+方法二（Server Manager）：
+1. 開啟 **Server Manager** → Manage → **Remove Roles and Features**
+2. Features → 找到 SMB 1.0 → 取消勾選
+
+**驗證**：開 PowerShell → `Get-SmbServerConfiguration | Select EnableSMB1Protocol, RequireSecuritySignature`
+
+---
+
+### 5. 稽核策略（52屆、55屆考過）
+
+**路徑**：`gpedit.msc` → 本機原則 → **稽核原則**
+
+每個項目都雙擊，勾選 **成功** 和 **失敗**：
+
+| 項目 | 成功 | 失敗 |
+|------|:----:|:----:|
+| 稽核帳戶登入事件 | ☑ | ☑ |
+| 稽核帳戶管理 | ☑ | ☑ |
+| 稽核登入事件 | ☑ | ☑ |
+| 稽核物件存取 | ☑ | ☑ |
+| 稽核原則變更 | ☑ | ☑ |
+| 稽核特殊權限使用 | ☑ | ☑ |
+| 稽核系統事件 | ☑ | ☑ |
+| 稽核目錄服務存取 | ☑ | ☑ |
+| 稽核程序追蹤 | ☑ | ☑ |
+
+**查看稽核事件**：
+
+1. `Win+R` → `eventvwr.msc` → Windows 記錄 → **安全性**
+2. 右邊「篩選目前的記錄」→ 輸入事件識別碼（如 `4688`）
+
+常見事件 ID：
+
+| 事件 ID | 意義 |
+|---------|------|
+| 4624 | 登入成功 |
+| 4625 | 登入失敗 |
+| 4688 | 新程序建立 |
+| 4720 | 建立使用者帳戶 |
+| 4732 | 成員加入安全性群組 |
+
+---
+
+### 6. Windows 防火牆（55屆考過）
+
+**開啟方式**：`Win+R` → `wf.msc`（具有進階安全性的 Windows Defender 防火牆）
+
+**步驟一：確認防火牆已啟用**
+
+左邊點「具有進階安全性的 Windows Defender 防火牆」→ 中間看三個設定檔：
+- 網域設定檔：**開啟**
+- 私人設定檔：**開啟**
+- 公用設定檔：**開啟**
+
+如果是關閉的 → 點「Windows Defender 防火牆內容」→ 每個分頁都改成「開啟」
+
+**步驟二：新增輸入規則**
+
+1. 左邊點「**輸入規則**」
+2. 右邊點「**新增規則**」
+3. 選擇規則類型：
+   - **連接埠** → 下一步 → TCP/UDP → 特定本機連接埠（如 `3389`）→ 允許連線
+   - **自訂** → 可設定 IP 範圍（如 192.168.10.0/24）
+
+**步驟三：設定預設行為**
+
+Windows Defender 防火牆內容 → 各設定檔分頁：
+- 輸入連線：**封鎖（預設值）**
+- 輸出連線：**允許（預設值）**
+
+**常見規則操作**：
+- 右鍵現有規則 → **啟用/停用/刪除**
+- 雙擊規則 → 「範圍」分頁可設定 IP 限制
+- 雙擊規則 → 「進階」分頁可設定套用的設定檔
+
+---
+
+### 7. Windows Installer 原則（53屆考過）
+
+**路徑**：`gpedit.msc` → 電腦設定 → 系統管理範本 → Windows 元件 → **Windows Installer**
+
+| 項目 | 設定 |
+|------|------|
+| 禁止移除更新 | **已啟用** |
+
+---
 
 ### 8. 權限配置（55屆考過）
 
-```powershell
-# 查看資料夾權限
-icacls C:\path\to\folder
+**檔案/資料夾權限**：
 
-# 設定權限（移除 Everyone）
-icacls C:\sensitive /remove Everyone
-icacls C:\sensitive /grant Administrators:F
-icacls C:\sensitive /grant "Domain Admins":F
+1. 在檔案總管中，對資料夾**右鍵** → **內容** → **安全性**分頁
+2. 點「**編輯**」修改權限
+3. 「**新增**」或「**移除**」使用者/群組
+4. 勾選允許或拒絕的權限（完全控制、修改、讀取和執行、讀取、寫入）
 
-# 移除繼承
-icacls C:\sensitive /inheritance:r
+**進階權限**：
+1. 安全性分頁 → 「**進階**」
+2. 可以設定「**停用繼承**」（移除從上層繼承的權限）
+3. 可以變更「**擁有者**」
 
-# 使用者權限指派
-# gpedit.msc → 本機原則 → 使用者權限指派
-# 從網路存取這台電腦 → 只留必要群組
-# 拒絕從網路存取這台電腦 → 加入 Guest
-```
+**使用者權限指派**：
+
+`gpedit.msc` → 本機原則 → **使用者權限指派**
+
+| 項目 | 建議 |
+|------|------|
+| 從網路存取這台電腦 | 只留必要群組 |
+| 拒絕從網路存取這台電腦 | 加入 Guest |
+| 允許本機登入 | 只留 Administrators |
+| 拒絕本機登入 | 加入 Guest |
 
 ---
 
@@ -162,128 +191,132 @@ icacls C:\sensitive /inheritance:r
 
 ### 9. 遠端桌面安全（54屆考過「遠端連線服務安全強化」）
 
-```powershell
-# 啟用 NLA（網路等級驗證）
-Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-    -Name UserAuthentication -Value 1
+**啟用 NLA（網路等級驗證）**：
 
-# 設定加密層級為 High
-Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-    -Name MinEncryptionLevel -Value 3
+1. **右鍵「本機」** → 內容 → **遠端設定**
+2. 勾選「允許遠端連線到此電腦」
+3. 勾選「**僅允許執行含有網路等級驗證的遠端桌面的電腦連線**」
 
-# 限制誰可以 RDP
-# gpedit.msc → 使用者權限指派 → 允許透過遠端桌面服務登入
-# 只留 Remote Desktop Users 群組
+**限制誰可以 RDP**：
 
-# 限制空白密碼
-# gpedit.msc → 安全性選項 → 帳戶：限制使用空白密碼的本機帳戶僅能從主控台登入 → 已啟用
+1. 同一個視窗 → 「**選取使用者**」
+2. 只保留需要的帳號，移除不需要的
 
-# 設定閒置斷線時間
-# gpedit.msc → 電腦設定 → 系統管理範本 → Windows 元件 → 遠端桌面服務 → 工作階段時間限制
-# 設定中斷工作階段的時間限制 → 已啟用，30 分鐘
-```
+**限制空白密碼**：
+
+`gpedit.msc` → 本機原則 → 安全性選項 →
+「帳戶：限制使用空白密碼的本機帳戶僅能從主控台登入」→ **已啟用**
+
+**設定加密層級**：
+
+`gpedit.msc` → 電腦設定 → 系統管理範本 → Windows 元件 → 遠端桌面服務 → 遠端桌面工作階段主機 → 安全性 →
+「設定用戶端連線加密等級」→ **已啟用** → **高**
+
+**設定閒置斷線**：
+
+`gpedit.msc` → ... → 遠端桌面服務 → 工作階段時間限制 →
+「設定使用中但閒置的遠端桌面服務工作階段的時間限制」→ **已啟用** → **30 分鐘**
+
+---
 
 ### 10. 事件記錄檔設定（54屆考過「稽核日誌安全強化」）
 
-```powershell
-# 設定事件記錄檔大小
-wevtutil sl Security /ms:209715200       # 200MB
-wevtutil sl Application /ms:104857600    # 100MB
-wevtutil sl System /ms:104857600         # 100MB
+**方法一：群組原則**
 
-# 設定不覆寫（滿了就封存）
-wevtutil sl Security /rt:false /ab:true
+`gpedit.msc` → 電腦設定 → 系統管理範本 → Windows 元件 → **事件記錄服務**
 
-# 或用群組原則
-# gpedit.msc → 電腦設定 → 系統管理範本 → Windows 元件 → 事件記錄服務
-# 安全性 → 指定記錄檔大小上限 → 已啟用 → 200000 KB
-# 安全性 → 記錄檔滿時的行為 → 封存記錄檔但不覆寫事件
+每個記錄（Application、Security、System）都有：
 
-# 限制事件記錄檔存取
-# 預設只有 Administrators 和 Event Log Readers 群組可讀 Security log
-```
+| 項目 | 設定 |
+|------|------|
+| 指定記錄檔大小上限 | 已啟用 → **200000** KB（≈200MB） |
+| 記錄檔滿時的行為 | 封存記錄檔但**不覆寫**事件 |
+
+**方法二：事件檢視器**
+
+1. `Win+R` → `eventvwr.msc`
+2. 左邊「Windows 記錄」→ 右鍵「**安全性**」→ **內容**
+3. 記錄檔大小上限：**204800** KB
+4. 記錄檔已滿時：選「**封存記錄不要覆寫事件**」或「**不要覆寫事件（手動清除記錄）**」
+
+---
 
 ### 11. AD 帳號管理
 
-```powershell
-# 停用 Guest 帳號
-Disable-LocalUser -Name Guest
-# 或 AD 環境
-Disable-ADAccount -Identity Guest
+**開啟 AD 使用者和電腦**：`Win+R` → `dsa.msc`
 
-# 重新命名 Administrator
-Rename-LocalUser -Name Administrator -NewName SecAdmin
-# gpedit.msc → 安全性選項 → 帳戶：重新命名系統管理員帳戶
+**停用 Guest 帳號**：
+1. 展開網域 → **Users**
+2. 右鍵 **Guest** → **停用帳戶**
 
-# 查看所有使用者
-Get-LocalUser
-# AD
-Get-ADUser -Filter * | Select Name, Enabled
+**重新命名 Administrator**：
 
-# 查看 Administrators 群組成員
-Get-LocalGroupMember -Group "Administrators"
-# AD
-Get-ADGroupMember -Identity "Domain Admins"
+方法一：`dsa.msc` → Users → 右鍵 **Administrator** → **重新命名**
 
-# 移除不該在 admin 群組的帳號
-Remove-LocalGroupMember -Group "Administrators" -Member "baduser"
-Remove-ADGroupMember -Identity "Domain Admins" -Members "baduser"
+方法二：`gpedit.msc` → 本機原則 → 安全性選項 →
+「帳戶：重新命名系統管理員帳戶」→ 輸入新名稱
 
-# 建立新使用者
-New-ADUser -Name "newadmin" -AccountPassword (ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force) `
-    -Enabled $true -ChangePasswordAtLogon $true
-```
+**查看/管理群組成員**：
+1. `dsa.msc` → **Users** 或 **Builtin**
+2. 雙擊 **Domain Admins**（或 Administrators）
+3. 「**成員**」分頁 → 檢查是否有不該在的帳號 → **移除**
+
+**建立新使用者**：
+1. `dsa.msc` → 右鍵 **Users** → 新增 → **使用者**
+2. 填入帳號名稱 → 下一步 → 設定密碼
+3. 勾選「使用者必須在下次登入時變更密碼」
+
+**本機使用者管理**（非 AD 環境）：`Win+R` → `lusrmgr.msc`
+- 左邊「**使用者**」→ 右鍵帳號 → 內容 → 可停用帳號
+- 左邊「**群組**」→ 雙擊 → 管理成員
+
+---
 
 ### 12. Windows Defender
 
-```powershell
-# 確認 Defender 啟用
-Get-MpComputerStatus | Select AntivirusEnabled, RealTimeProtectionEnabled
+**開啟**：開始 → 搜尋「**Windows 安全性**」→ **病毒與威脅防護**
 
-# 啟用即時保護
-Set-MpPreference -DisableRealtimeMonitoring $false
+**確認即時保護**：
+1. 病毒與威脅防護 → 「**管理設定**」
+2. 確認「**即時保護**」→ **開啟**
+3. 確認「**雲端提供的保護**」→ 開啟
 
-# 更新定義檔
-Update-MpSignature
+**檢查排除項目**（攻擊者可能加了 C:\ 排除所有掃描）：
+1. 管理設定 → 往下捲到「**排除項目**」
+2. 點「**新增或移除排除**」
+3. 刪除任何可疑的排除（特別是 `C:\`）
 
-# 檢查排除項目（攻擊者可能加了 C:\ 全排除）
-Get-MpPreference | Select ExclusionPath, ExclusionExtension, ExclusionProcess
+**更新定義檔**：
+1. 病毒與威脅防護 → 「**保護更新**」→ 「檢查更新」
 
-# 移除可疑排除
-Remove-MpPreference -ExclusionPath "C:\"
+**執行掃描**：
+1. 病毒與威脅防護 → 「**快速掃描**」或「掃描選項」→「完整掃描」
 
-# 全系統掃描
-Start-MpScan -ScanType FullScan
-```
+---
 
 ### 13. 服務管理
 
-```powershell
-# 查看運行中的服務
-Get-Service | Where-Object {$_.Status -eq 'Running'} | Select Name, DisplayName
+**開啟**：`Win+R` → `services.msc`
 
-# 停用不安全服務
-Stop-Service -Name "RemoteRegistry" -Force
-Set-Service -Name "RemoteRegistry" -StartupType Disabled
+**停用不安全服務**：
+1. 找到服務名稱
+2. 雙擊 → **啟動類型**改為「**已停用**」
+3. 點「**停止**」→ 確定
 
-# 常見應停用的服務
-$dangerousServices = @(
-    "RemoteRegistry",       # 遠端登錄存取
-    "TlntSvr",             # Telnet
-    "FTPSVC",              # FTP
-    "SNMP",                # SNMP
-    "SSDPSRV",             # SSDP Discovery
-    "upnphost",            # UPnP
-    "WMSvc",               # Web Management Service（不需要時）
-    "Browser"              # Computer Browser
-)
-foreach ($svc in $dangerousServices) {
-    if (Get-Service -Name $svc -ErrorAction SilentlyContinue) {
-        Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
-        Set-Service -Name $svc -StartupType Disabled
-    }
-}
-```
+**常見應停用的服務**：
+
+| 服務名稱 | 風險 |
+|----------|------|
+| Remote Registry | 遠端存取登錄檔 |
+| Telnet | 明文遠端連線 |
+| FTP Publishing Service | FTP 明文傳輸 |
+| SNMP Service | 社群字串明文 |
+| SSDP Discovery | UPnP 裝置發現 |
+| UPnP Device Host | UPnP 服務 |
+| Computer Browser | 廣播網路資源 |
+| Windows Remote Management (WS-Management) | 遠端管理（不需要時關閉） |
+
+**不要停用的服務**：Windows Firewall、Event Log、Windows Update、Windows Defender
 
 ---
 
@@ -291,116 +324,106 @@ foreach ($svc in $dangerousServices) {
 
 ### 14. UAC（使用者帳戶控制）
 
-```powershell
-# 確認 UAC 啟用
-Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System |
-    Select EnableLUA, ConsentPromptBehaviorAdmin
+**開啟**：控制台 → 使用者帳戶 → **變更使用者帳戶控制設定**
 
-# 啟用 UAC
-Set-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System `
-    -Name EnableLUA -Value 1
+或：開始 → 搜尋「**UAC**」
 
-# 設定 Admin 需同意提示（不是自動提升）
-Set-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System `
-    -Name ConsentPromptBehaviorAdmin -Value 2
-```
+**建議**：拉到**第二格**（預設）或**最高**
+- 最高 = 一律通知（最安全）
+- 第二格 = 程式變更時通知（預設）
+- 最低 = 不通知（危險！）
+
+---
 
 ### 15. 排程任務稽核
 
-```powershell
-# 列出所有排程任務
-Get-ScheduledTask | Where-Object {$_.State -ne 'Disabled'} |
-    Select TaskName, TaskPath, State
+**開啟**：`Win+R` → `taskschd.msc`
 
-# 找可疑的排程（非 Microsoft 的）
-Get-ScheduledTask | Where-Object {$_.TaskPath -notlike '\Microsoft\*'} |
-    Select TaskName, TaskPath
+**檢查步驟**：
+1. 左邊「**工作排程器程式庫**」
+2. 中間列出所有排程任務
+3. 找不是 Microsoft 內建的 → 右鍵 → **內容**
+4. 看「**動作**」分頁 → 確認執行的程式是否正常
+5. 可疑的 → 右鍵 → **停用** 或 **刪除**
 
-# 停用可疑排程
-Disable-ScheduledTask -TaskName "SuspiciousTask"
+**常見可疑特徵**：
+- 名稱隨機（如 `a1b2c3`）
+- 執行 `powershell.exe`、`cmd.exe` + 奇怪參數
+- 觸發器設定每分鐘執行
+- 路徑在 `C:\Temp`、`C:\Users\Public` 等
 
-# 刪除
-Unregister-ScheduledTask -TaskName "SuspiciousTask" -Confirm:$false
-```
+---
 
 ### 16. 共享資料夾安全
 
-```powershell
-# 查看所有共享
-Get-SmbShare
+**開啟**：`Win+R` → `fsmgmt.msc`
 
-# 移除不需要的共享
-Remove-SmbShare -Name "BadShare" -Force
+**檢查步驟**：
+1. 左邊「**共用**」→ 看所有共享資料夾
+2. 右鍵 → **內容** → 「**共用權限**」分頁
+3. 移除 **Everyone** 的完整控制權限
+4. 只保留需要的群組
+5. 不需要的共享 → 右鍵 → **停止共用**
 
-# 檢查共享權限
-Get-SmbShareAccess -Name "ShareName"
+**也要檢查「安全性」分頁**（NTFS 權限）：
+- 共用權限 + NTFS 權限 = 取交集（最嚴格的生效）
 
-# 設定共享權限
-Grant-SmbShareAccess -Name "ShareName" -AccountName "Domain Users" -AccessRight Read -Force
-Revoke-SmbShareAccess -Name "ShareName" -AccountName "Everyone" -Force
-
-# 隱藏管理共享（C$, ADMIN$）
-# 通常不建議停用，但要確認存取權限
-```
+---
 
 ### 17. IIS 安全（如果有裝）
 
-```powershell
-# 移除不需要的 HTTP 方法
-# 在 IIS Manager → Request Filtering → HTTP Verbs → Deny: PUT, DELETE, TRACE
+**開啟**：`Win+R` → `inetmgr`（IIS Manager）
 
-# 移除版本資訊
-# web.config:
-# <httpRuntime enableVersionHeader="false" />
-# <customHeaders><remove name="X-Powered-By" /></customHeaders>
+**停用目錄瀏覽**：
+1. 選擇站台 → 中間雙擊「**目錄瀏覽**」
+2. 右邊「**停用**」
 
-# 停用目錄瀏覽
-Set-WebConfigurationProperty -Filter system.webServer/directoryBrowse `
-    -Name enabled -Value false -PSPath "IIS:\Sites\Default Web Site"
+**移除版本資訊**：
+1. 選擇站台 → 「**HTTP 回應標頭**」
+2. 找到 **X-Powered-By** → 右鍵 → **移除**
 
-# 啟用 HTTPS
-# 類似 Apache 的做法，需要憑證 + binding
-```
+**要求篩選（Request Filtering）**：
+1. 選擇站台 → 「**要求篩選**」
+2. 「HTTP 指令動詞」分頁 → **拒絕**：`PUT`、`DELETE`、`TRACE`
+
+**HTTPS 綁定**：
+1. 左邊選擇站台 → 右邊「**繫結**」
+2. 「**新增**」→ 類型選 **https** → 選擇 SSL 憑證 → 確定
+
+---
 
 ### 18. DNS 安全（AD 環境常見）
 
-```powershell
-# 停用 DNS 區域轉送（防洩漏所有 DNS 紀錄）
-# DNS Manager → Zone → Properties → Zone Transfers → 不允許
+**開啟**：`Win+R` → `dnsmgmt.msc`
 
-# 或 PowerShell
-Set-DnsServerPrimaryZone -Name "domain.local" -SecureSecondaries NoTransfer
+**停用區域轉送**：
+1. 展開 DNS 伺服器 → **正向對應區域**
+2. 右鍵區域 → **內容**
+3. 「**區域轉送**」分頁 → **取消勾選「允許區域轉送」**
+4. 或選「僅允許到下列伺服器」→ 指定特定 IP
 
-# 啟用 DNS 記錄
-Set-DnsServerDiagnostics -All $true
-```
+---
 
 ### 19. LDAP 安全（AD 環境）
 
-```powershell
-# 強制 LDAP 簽名
-# gpedit.msc → 本機原則 → 安全性選項
-# 網域控制站：LDAP 伺服器簽署需求 → 需要簽署
+**路徑**：`gpedit.msc` → 本機原則 → 安全性選項
 
-# 或登錄檔
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters" `
-    -Name "LDAPServerIntegrity" -Value 2
+| 項目 | 設定 |
+|------|------|
+| 網域控制站：LDAP 伺服器簽署需求 | **需要簽署** |
+| 網路安全性：LDAP 用戶端簽署需求 | **需要簽署** |
 
-# 停用 LDAP 匿名綁定
-# 預設 AD 不允許，但要確認
-```
+---
 
 ### 20. 網路驗證等級（54屆考過）
 
-```powershell
-# 設定 LAN Manager 驗證等級
-# gpedit.msc → 安全性選項 → 網路安全性：LAN Manager 驗證等級
-# 設定為：僅傳送 NTLMv2 回應。拒絕 LM & NTLM
+**路徑**：`gpedit.msc` → 本機原則 → 安全性選項
 
-# 登錄檔
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" `
-    -Name "LmCompatibilityLevel" -Value 5
-```
+找到：「**網路安全性：LAN Manager 驗證等級**」
+
+設定為：**僅傳送 NTLMv2 回應。拒絕 LM & NTLM**
+
+> 這是最安全的選項，LM 和 NTLM v1 的雜湊很容易被破解
 
 ---
 
@@ -408,135 +431,110 @@ Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" `
 
 ### 21. BitLocker
 
-```powershell
-# 啟用 BitLocker
-Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 `
-    -RecoveryPasswordProtector
+1. 開始 → 搜尋「**管理 BitLocker**」
+2. 選擇 C: → 「**開啟 BitLocker**」
+3. 選擇密碼保護方式 → 備份修復金鑰 → 加密整個磁碟 → 開始加密
 
-# 查看狀態
-Get-BitLockerVolume
-```
+### 22. PowerShell 執行原則 & 日誌
 
-### 22. PowerShell 執行原則
+**路徑**：`gpedit.msc` → 電腦設定 → 系統管理範本 → Windows 元件 → **Windows PowerShell**
 
-```powershell
-# 查看
-Get-ExecutionPolicy -List
+| 項目 | 設定 |
+|------|------|
+| 開啟 PowerShell 指令碼區塊記錄 | **已啟用** |
+| 開啟模組記錄 | **已啟用** |
+| 開啟 PowerShell 轉譯 | **已啟用**（記錄所有輸入/輸出） |
 
-# 設定（限制未簽名腳本）
-Set-ExecutionPolicy RemoteSigned -Scope LocalMachine
+### 23. Windows Update
 
-# 啟用 PowerShell 腳本日誌
-# gpedit.msc → 系統管理範本 → Windows 元件 → Windows PowerShell
-# 開啟 PowerShell 指令碼區塊記錄 → 已啟用
-# 開啟模組記錄 → 已啟用
-```
+**路徑**：`gpedit.msc` → 電腦設定 → 系統管理範本 → Windows 元件 → **Windows Update**
 
-### 23. WSUS / Windows Update
+| 項目 | 設定 |
+|------|------|
+| 設定自動更新 | 已啟用 → **自動下載並排程安裝** |
+| 不要在「關閉 Windows」對話方塊顯示「安裝更新並關機」 | 停用 |
 
-```powershell
-# 檢查更新
-Get-WindowsUpdate                              # 需要 PSWindowsUpdate 模組
-Install-WindowsUpdate -AcceptAll -AutoReboot   # 安裝全部
+### 24. 登錄檔安全（regedit）
 
-# 群組原則設定自動更新
-# gpedit.msc → 電腦設定 → 系統管理範本 → Windows 元件 → Windows Update
-# 設定自動更新 → 已啟用 → 自動下載並排程安裝
-```
+`Win+R` → `regedit`
 
-### 24. 登錄檔安全
+| 路徑 | 值 | 設定 | 說明 |
+|------|-----|------|------|
+| `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer` | NoDriveTypeAutoRun | 255 | 停用自動執行（防 USB 攻擊） |
+| `HKLM\SYSTEM\CurrentControlSet\Control\Lsa` | NoLMHash | 1 | 停用 LM hash 儲存 |
+| `HKLM\...\Policies\System` | DisableCAD | 0 | 啟用 CTRL+ALT+DEL |
 
-```powershell
-# 停用自動執行（防 USB 攻擊）
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" `
-    -Name NoDriveTypeAutoRun -Value 255
-
-# 停用 LM hash 儲存
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" `
-    -Name NoLMHash -Value 1
-
-# 啟用安全登入（CTRL+ALT+DEL）
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" `
-    -Name DisableCAD -Value 0
-```
+> 以上也可以透過 gpedit.msc 達成，登錄檔是底層方式
 
 ### 25. 憑證管理
 
-```powershell
-# 查看已儲存的憑證
-cmdkey /list
-
-# 刪除可疑憑證
-cmdkey /delete:targetname
-
-# 清除已快取的 Kerberos tickets
-klist purge
-```
+1. 控制台 → 使用者帳戶 → **憑證管理員**
+2. 檢查「**Windows 認證**」和「**一般認證**」
+3. 移除不認識的已儲存認證
 
 ---
 
-## 五、工具速查
+## 五、工具速查（Win+R 開啟）
 
-| 工具 | 用途 |
-|------|------|
-| `gpedit.msc` | 群組原則編輯器（最常用） |
-| `secpol.msc` | 本機安全性原則 |
-| `lusrmgr.msc` | 本機使用者和群組 |
-| `compmgmt.msc` | 電腦管理 |
-| `eventvwr.msc` | 事件檢視器 |
-| `services.msc` | 服務管理 |
-| `wf.msc` | Windows 防火牆（進階） |
-| `diskmgmt.msc` | 磁碟管理 |
-| `fsmgmt.msc` | 共享資料夾管理 |
-| `taskschd.msc` | 排程任務 |
-| `dsa.msc` | AD 使用者和電腦 |
-| `gpmc.msc` | 群組原則管理（AD） |
-| `dnsmgmt.msc` | DNS 管理 |
-| `auditpol` | 稽核原則命令列 |
-| `secedit` | 安全設定命令列 |
-| `netsh` | 網路/防火牆命令列 |
-| `icacls` | 檔案權限命令列 |
+| 指令 | 工具 | 用途 |
+|------|------|------|
+| `gpedit.msc` | 群組原則編輯器 | **最常用** — 密碼、鎖定、稽核、安全性選項 |
+| `secpol.msc` | 本機安全性原則 | gpedit 的子集 |
+| `lusrmgr.msc` | 本機使用者和群組 | 帳號管理（非 AD） |
+| `dsa.msc` | AD 使用者和電腦 | 帳號管理（AD） |
+| `gpmc.msc` | 群組原則管理 | AD 環境的 GPO 管理 |
+| `eventvwr.msc` | 事件檢視器 | 查看稽核日誌 |
+| `services.msc` | 服務管理 | 停用/啟用服務 |
+| `wf.msc` | 進階防火牆 | 防火牆規則 |
+| `taskschd.msc` | 工作排程器 | 檢查排程任務 |
+| `fsmgmt.msc` | 共享資料夾管理 | 共享權限 |
+| `compmgmt.msc` | 電腦管理 | 綜合管理工具 |
+| `dnsmgmt.msc` | DNS 管理 | DNS 設定 |
+| `diskmgmt.msc` | 磁碟管理 | 磁碟分割 |
+| `inetmgr` | IIS Manager | Web 伺服器 |
+| `regedit` | 登錄檔編輯器 | 底層設定 |
+| `appwiz.cpl` | 程式和功能 | 新增/移除功能 |
+| `ncpa.cpl` | 網路連線 | 網路介面卡設定 |
 
 ---
 
-## 六、PowerShell 速查
+## 六、PowerShell 驗證速查（確認 GUI 設定是否生效）
 
 ```powershell
-# 匯出目前安全性設定（可備份比對）
-secedit /export /cfg C:\before.cfg
+# 密碼策略
+net accounts
 
-# 比對修改前後
-Compare-Object (Get-Content C:\before.cfg) (Get-Content C:\after.cfg)
+# 稽核策略
+auditpol /get /category:*
 
-# 查看所有本機使用者
-Get-LocalUser | Select Name, Enabled, PasswordLastSet
+# 防火牆狀態
+Get-NetFirewallProfile | Select Name, Enabled, DefaultInboundAction
 
-# 查看所有群組及成員
-Get-LocalGroup | ForEach-Object {
-    Write-Host "`n$($_.Name):" -ForegroundColor Cyan
-    Get-LocalGroupMember -Group $_.Name | Select Name, ObjectClass
-}
+# SMB 狀態
+Get-SmbServerConfiguration | Select EnableSMB1Protocol, RequireSecuritySignature
 
-# 查看已安裝的功能
-Get-WindowsFeature | Where-Object {$_.Installed} | Select Name    # Server
-Get-WindowsOptionalFeature -Online | Where-Object {$_.State -eq 'Enabled'}  # Desktop
+# 查看本機使用者
+Get-LocalUser | Select Name, Enabled
+
+# 查看群組成員
+Get-LocalGroupMember -Group "Administrators"
 
 # 查看 listening ports
-Get-NetTCPConnection -State Listen | Select LocalAddress, LocalPort, OwningProcess |
-    Sort-Object LocalPort
+netstat -ano | findstr LISTENING
 
 # 查看啟動項目
-Get-CimInstance Win32_StartupCommand | Select Name, Command, Location
-Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
-Get-ItemProperty HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+Get-CimInstance Win32_StartupCommand | Select Name, Command
+
+# 匯出安全性設定（比賽前後比對）
+secedit /export /cfg C:\before.cfg
 ```
 
 ---
 
 ## 七、歷屆 vs 預測對照表
 
-| 主題 | 52 | 53 | 54 | 55 | 預測機率 | 上面編號 |
-|------|:--:|:--:|:--:|:--:|:--------:|:--------:|
+| 主題 | 52 | 53 | 54 | 55 | 預測機率 | 編號 |
+|------|:--:|:--:|:--:|:--:|:--------:|:----:|
 | 密碼策略 | | ✅ | | ✅ | ★★★★★ | 1 |
 | 帳戶鎖定 | | ✅ | | | ★★★★★ | 2 |
 | 安全性選項 | | ✅ | | | ★★★★☆ | 3 |
@@ -561,10 +559,8 @@ Get-ItemProperty HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
 
 ### 建議練習順序
 
-**第一輪（必練，歷屆必考）**：1 → 2 → 5 → 6 → 3
+**第一輪（必練）**：1 密碼策略 → 2 帳戶鎖定 → 5 稽核策略 → 6 防火牆 → 3 安全性選項
 
-**第二輪（高機率）**：4 → 8 → 9 → 10 → 11
+**第二輪（高機率）**：4 SMB → 8 權限 → 9 遠端桌面 → 10 事件記錄檔 → 11 AD 帳號
 
-**第三輪（補齊）**：12 → 13 → 14 → 15 → 20
-
-**有空再看**：其餘
+**第三輪（補齊）**：12 Defender → 13 服務 → 14 UAC → 15 排程 → 20 網路驗證
