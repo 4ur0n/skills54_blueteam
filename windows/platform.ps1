@@ -1,0 +1,1228 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    Windows AD Security Hardening Platform - Cyberpunk GUI
+.DESCRIPTION
+    A WPF-based security hardening training platform with matrix rain animation,
+    25 challenge topics covering AD security hardening checks.
+.NOTES
+    Must run as Administrator on a Windows Server with AD DS role.
+#>
+
+# ── Encoding & Assembly ──────────────────────────────────────────────
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
+
+# ══════════════════════════════════════════════════════════════════════
+# SECTION 1 - DATA MODEL: Challenge Definitions
+# ══════════════════════════════════════════════════════════════════════
+
+$script:Challenges = @(
+    # ── Category 1: 歷屆必考 (Historical Must-Know) ──
+    @{ Id=1;  Title="密碼策略";         Category="歷屆必考"; Color="#ff6600"; Checks=@("MinimumPasswordLength >= 8","PasswordComplexity = 1","MaximumPasswordAge <= 90","PasswordHistorySize >= 5") }
+    @{ Id=2;  Title="帳戶鎖定原則";     Category="歷屆必考"; Color="#ff6600"; Checks=@("LockoutBadCount 3-5","ResetLockoutCount >= 30","LockoutDuration >= 30") }
+    @{ Id=3;  Title="安全性選項";       Category="歷屆必考"; Color="#ff6600"; Checks=@("DisableCAD = 0","DontDisplayLastUserName = 1","PasswordExpiryWarning >= 7") }
+    @{ Id=4;  Title="SMB 安全";         Category="歷屆必考"; Color="#ff6600"; Checks=@("RequireSecuritySignature = True","EnableSMB1Protocol = False") }
+    @{ Id=5;  Title="稽核策略";         Category="歷屆必考"; Color="#ff6600"; Checks=@("Account Logon Audit","Logon/Logoff Audit","Object Access Audit","Policy Change Audit","System Audit") }
+    @{ Id=6;  Title="Windows 防火牆";   Category="歷屆必考"; Color="#ff6600"; Checks=@("Domain Profile Enabled","Private Profile Enabled","Public Profile Enabled") }
+    @{ Id=7;  Title="Windows Installer"; Category="歷屆必考"; Color="#ff6600"; Checks=@("DisablePatchUninstall = 1") }
+    @{ Id=8;  Title="權限配置";         Category="歷屆必考"; Color="#ff6600"; Checks=@("No Everyone:FullControl on SensitiveData") }
+
+    # ── Category 2: 高機率 (High Probability) ──
+    @{ Id=9;  Title="遠端桌面安全";     Category="高機率"; Color="#00d4ff"; Checks=@("NLA UserAuthentication = 1","SecurityLayer or fDenyTSConnections") }
+    @{ Id=10; Title="事件記錄檔";       Category="高機率"; Color="#00d4ff"; Checks=@("Security Log >= 100 MB") }
+    @{ Id=11; Title="AD 帳號管理";      Category="高機率"; Color="#00d4ff"; Checks=@("Guest Account Disabled","No Extra Domain Admins","Administrator Renamed") }
+    @{ Id=12; Title="Windows Defender";  Category="高機率"; Color="#00d4ff"; Checks=@("No C:\\ Exclusion","RealTimeProtection Enabled") }
+    @{ Id=13; Title="服務管理";         Category="高機率"; Color="#00d4ff"; Checks=@("RemoteRegistry Stopped","Telnet Stopped","Other Risky Services") }
+
+    # ── Category 3: 中等機率 (Medium) ──
+    @{ Id=14; Title="UAC";              Category="中等機率"; Color="#a855f7"; Checks=@("EnableLUA = 1") }
+    @{ Id=15; Title="排程任務";         Category="中等機率"; Color="#a855f7"; Checks=@("No Suspicious Tasks") }
+    @{ Id=16; Title="共享資料夾";       Category="中等機率"; Color="#a855f7"; Checks=@("No Everyone:FullControl Shares") }
+    @{ Id=17; Title="IIS 安全";         Category="中等機率"; Color="#a855f7"; Checks=@("Directory Browsing Disabled") }
+    @{ Id=18; Title="DNS 安全";         Category="中等機率"; Color="#a855f7"; Checks=@("Zone Transfer Disabled") }
+    @{ Id=19; Title="LDAP 安全";        Category="中等機率"; Color="#a855f7"; Checks=@("LDAPServerIntegrity >= 1") }
+    @{ Id=20; Title="網路驗證等級";     Category="中等機率"; Color="#a855f7"; Checks=@("LmCompatibilityLevel >= 3") }
+
+    # ── Category 4: 低機率 (Low) ──
+    @{ Id=22; Title="PowerShell 日誌";  Category="低機率"; Color="#666666"; Checks=@("EnableScriptBlockLogging = 1") }
+    @{ Id=23; Title="Windows Update";   Category="低機率"; Color="#666666"; Checks=@("wuauserv Running","NoAutoUpdate != 1") }
+    @{ Id=24; Title="登錄檔安全";       Category="低機率"; Color="#666666"; Checks=@("NoDriveTypeAutoRun = 255","NoLMHash = 1","DisableCAD = 0") }
+)
+
+# Runtime state per challenge
+$script:ChallengeState = @{}
+foreach ($c in $script:Challenges) {
+    $script:ChallengeState[$c.Id] = @{
+        Status      = "Pending"   # Pending | Passed | Failed | Warning
+        CheckResults = @{}         # check_name -> $true / $false / $null
+        PassedCount = 0
+        TotalCount  = $c.Checks.Count
+    }
+}
+
+# ── Secedit cache ────────────────────────────────────────────────────
+$script:SeceditCache      = $null
+$script:SeceditCacheTime  = [datetime]::MinValue
+$script:SeceditTempFile   = "$env:TEMP\secedit_export_$PID.inf"
+
+function Get-SeceditData {
+    $now = Get-Date
+    if ($script:SeceditCache -and ($now - $script:SeceditCacheTime).TotalSeconds -lt 5) {
+        return $script:SeceditCache
+    }
+    try {
+        secedit /export /cfg $script:SeceditTempFile /quiet 2>$null | Out-Null
+        $script:SeceditCache     = Get-Content $script:SeceditTempFile -ErrorAction Stop
+        $script:SeceditCacheTime = $now
+    } catch {
+        $script:SeceditCache = @()
+    }
+    return $script:SeceditCache
+}
+
+function Get-SeceditValue {
+    param([string]$Key)
+    $data = Get-SeceditData
+    foreach ($line in $data) {
+        if ($line -match "^\s*$Key\s*=\s*(.+)$") {
+            return $Matches[1].Trim()
+        }
+    }
+    return $null
+}
+
+function Get-RegValue {
+    param([string]$Path, [string]$Name)
+    try {
+        $val = Get-ItemProperty -Path $Path -Name $Name -ErrorAction Stop
+        return $val.$Name
+    } catch { return $null }
+}
+
+# ══════════════════════════════════════════════════════════════════════
+# SECTION 2 - VERIFY FUNCTIONS (one per challenge)
+# ══════════════════════════════════════════════════════════════════════
+
+function Verify-Challenge {
+    param([int]$Id)
+    $results = @{}
+    try {
+        switch ($Id) {
+            # ─── 1. 密碼策略 ─────────────────────────────────────────
+            1 {
+                $v = Get-SeceditValue "MinimumPasswordLength"
+                $results["MinimumPasswordLength >= 8"] = ($null -ne $v -and [int]$v -ge 8)
+
+                $v = Get-SeceditValue "PasswordComplexity"
+                $results["PasswordComplexity = 1"] = ($null -ne $v -and [int]$v -eq 1)
+
+                $v = Get-SeceditValue "MaximumPasswordAge"
+                $results["MaximumPasswordAge <= 90"] = ($null -ne $v -and [int]$v -le 90 -and [int]$v -gt 0)
+
+                $v = Get-SeceditValue "PasswordHistorySize"
+                $results["PasswordHistorySize >= 5"] = ($null -ne $v -and [int]$v -ge 5)
+            }
+
+            # ─── 2. 帳戶鎖定原則 ─────────────────────────────────────
+            2 {
+                $v = Get-SeceditValue "LockoutBadCount"
+                $results["LockoutBadCount 3-5"] = ($null -ne $v -and [int]$v -ge 3 -and [int]$v -le 5)
+
+                $v = Get-SeceditValue "ResetLockoutCount"
+                $results["ResetLockoutCount >= 30"] = ($null -ne $v -and [int]$v -ge 30)
+
+                $v = Get-SeceditValue "LockoutDuration"
+                $results["LockoutDuration >= 30"] = ($null -ne $v -and [int]$v -ge 30)
+            }
+
+            # ─── 3. 安全性選項 ────────────────────────────────────────
+            3 {
+                $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "DisableCAD"
+                $results["DisableCAD = 0"] = ($null -ne $v -and [int]$v -eq 0)
+
+                $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "DontDisplayLastUserName"
+                $results["DontDisplayLastUserName = 1"] = ($null -ne $v -and [int]$v -eq 1)
+
+                $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" "PasswordExpiryWarning"
+                if ($null -eq $v) { $v = 5 }
+                $results["PasswordExpiryWarning >= 7"] = ([int]$v -ge 7)
+            }
+
+            # ─── 4. SMB 安全 ─────────────────────────────────────────
+            4 {
+                try {
+                    $smb = Get-SmbServerConfiguration -ErrorAction Stop
+                    $results["RequireSecuritySignature = True"] = ($smb.RequireSecuritySignature -eq $true)
+                    $results["EnableSMB1Protocol = False"] = ($smb.EnableSMB1Protocol -eq $false)
+                } catch {
+                    $results["RequireSecuritySignature = True"] = $null
+                    $results["EnableSMB1Protocol = False"] = $null
+                }
+            }
+
+            # ─── 5. 稽核策略 ─────────────────────────────────────────
+            5 {
+                try {
+                    $audit = auditpol /get /category:* 2>&1 | Out-String
+                    $cats = @{
+                        "Account Logon Audit"  = "Account Logon|帳戶登入"
+                        "Logon/Logoff Audit"   = "Logon/Logoff|登入/登出"
+                        "Object Access Audit"  = "Object Access|物件存取"
+                        "Policy Change Audit"  = "Policy Change|原則變更"
+                        "System Audit"         = "System|系統"
+                    }
+                    foreach ($k in $cats.Keys) {
+                        $pattern = $cats[$k]
+                        # A category passes if it contains "Success and Failure"
+                        $found = $false
+                        foreach ($line in ($audit -split "`n")) {
+                            if ($line -match $pattern -and $line -match "Success and Failure") {
+                                $found = $true; break
+                            }
+                        }
+                        $results[$k] = $found
+                    }
+                } catch {
+                    foreach ($k in @("Account Logon Audit","Logon/Logoff Audit","Object Access Audit","Policy Change Audit","System Audit")) {
+                        $results[$k] = $null
+                    }
+                }
+            }
+
+            # ─── 6. Windows 防火牆 ───────────────────────────────────
+            6 {
+                try {
+                    $profiles = Get-NetFirewallProfile -ErrorAction Stop
+                    foreach ($p in @("Domain","Private","Public")) {
+                        $prof = $profiles | Where-Object { $_.Name -eq $p }
+                        $results["$p Profile Enabled"] = ($prof -and $prof.Enabled -eq $true)
+                    }
+                } catch {
+                    foreach ($p in @("Domain","Private","Public")) {
+                        $results["$p Profile Enabled"] = $null
+                    }
+                }
+            }
+
+            # ─── 7. Windows Installer ─────────────────────────────────
+            7 {
+                $v = Get-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer" "DisablePatchUninstall"
+                $results["DisablePatchUninstall = 1"] = ($null -ne $v -and [int]$v -eq 1)
+            }
+
+            # ─── 8. 權限配置 ─────────────────────────────────────────
+            8 {
+                try {
+                    if (Test-Path "C:\SensitiveData") {
+                        $acl = Get-Acl "C:\SensitiveData" -ErrorAction Stop
+                        $bad = $acl.Access | Where-Object {
+                            $_.IdentityReference -match "Everyone|所有人" -and
+                            $_.FileSystemRights -match "FullControl"
+                        }
+                        $results["No Everyone:FullControl on SensitiveData"] = ($null -eq $bad -or $bad.Count -eq 0)
+                    } else {
+                        $results["No Everyone:FullControl on SensitiveData"] = $null
+                    }
+                } catch {
+                    $results["No Everyone:FullControl on SensitiveData"] = $null
+                }
+            }
+
+            # ─── 9. 遠端桌面安全 ─────────────────────────────────────
+            9 {
+                $v = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" "UserAuthentication"
+                $results["NLA UserAuthentication = 1"] = ($null -ne $v -and [int]$v -eq 1)
+
+                $sec = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" "SecurityLayer"
+                $deny = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" "fDenyTSConnections"
+                $results["SecurityLayer or fDenyTSConnections"] = (($null -ne $sec -and [int]$sec -ge 1) -or ($null -ne $deny -and [int]$deny -eq 1))
+            }
+
+            # ─── 10. 事件記錄檔 ──────────────────────────────────────
+            10 {
+                try {
+                    $info = wevtutil gl Security 2>&1 | Out-String
+                    if ($info -match "maxSize:\s*(\d+)") {
+                        $bytes = [long]$Matches[1]
+                        $results["Security Log >= 100 MB"] = ($bytes -ge 104857600)
+                    } else {
+                        $results["Security Log >= 100 MB"] = $null
+                    }
+                } catch {
+                    $results["Security Log >= 100 MB"] = $null
+                }
+            }
+
+            # ─── 11. AD 帳號管理 ─────────────────────────────────────
+            11 {
+                try {
+                    Import-Module ActiveDirectory -ErrorAction Stop
+                    $guest = Get-ADUser -Identity "Guest" -Properties Enabled -ErrorAction Stop
+                    $results["Guest Account Disabled"] = ($guest.Enabled -eq $false)
+                } catch {
+                    $results["Guest Account Disabled"] = $null
+                }
+                try {
+                    Import-Module ActiveDirectory -ErrorAction Stop
+                    $admins = Get-ADGroupMember "Domain Admins" -ErrorAction Stop
+                    $results["No Extra Domain Admins"] = ($admins.Count -le 2)
+                } catch {
+                    $results["No Extra Domain Admins"] = $null
+                }
+                try {
+                    Import-Module ActiveDirectory -ErrorAction Stop
+                    $admin = Get-ADUser -Filter {SID -like "*-500"} -ErrorAction Stop
+                    $results["Administrator Renamed"] = ($admin.SamAccountName -ne "Administrator")
+                } catch {
+                    $results["Administrator Renamed"] = $null
+                }
+            }
+
+            # ─── 12. Windows Defender ─────────────────────────────────
+            12 {
+                try {
+                    $mp = Get-MpPreference -ErrorAction Stop
+                    $hasExcl = $mp.ExclusionPath -contains "C:\"
+                    $results["No C:\ Exclusion"] = (-not $hasExcl)
+                    $results["RealTimeProtection Enabled"] = ($mp.DisableRealtimeMonitoring -ne $true)
+                } catch {
+                    $results["No C:\ Exclusion"] = $null
+                    $results["RealTimeProtection Enabled"] = $null
+                }
+            }
+
+            # ─── 13. 服務管理 ─────────────────────────────────────────
+            13 {
+                foreach ($svc in @(
+                    @{Name="RemoteRegistry"; Key="RemoteRegistry Stopped"},
+                    @{Name="TlntSvr";       Key="Telnet Stopped"}
+                )) {
+                    try {
+                        $s = Get-Service -Name $svc.Name -ErrorAction Stop
+                        $results[$svc.Key] = ($s.Status -eq "Stopped" -and $s.StartType -eq "Disabled")
+                    } catch {
+                        $results[$svc.Key] = $true   # service not present = OK
+                    }
+                }
+                # Other risky services (SNMP, SSDP, etc.)
+                $risky = @("SNMPTRAP","SSDPSRV","upnphost")
+                $allGood = $true
+                foreach ($r in $risky) {
+                    try {
+                        $s = Get-Service -Name $r -ErrorAction Stop
+                        if ($s.Status -ne "Stopped") { $allGood = $false }
+                    } catch { }
+                }
+                $results["Other Risky Services"] = $allGood
+            }
+
+            # ─── 14. UAC ─────────────────────────────────────────────
+            14 {
+                $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "EnableLUA"
+                $results["EnableLUA = 1"] = ($null -ne $v -and [int]$v -eq 1)
+            }
+
+            # ─── 15. 排程任務 ─────────────────────────────────────────
+            15 {
+                try {
+                    $tasks = Get-ScheduledTask -ErrorAction Stop | Where-Object {
+                        $_.TaskPath -notmatch "\\Microsoft\\" -and
+                        $_.State -ne "Disabled"
+                    }
+                    $results["No Suspicious Tasks"] = ($null -eq $tasks -or $tasks.Count -eq 0)
+                } catch {
+                    $results["No Suspicious Tasks"] = $null
+                }
+            }
+
+            # ─── 16. 共享資料夾 ───────────────────────────────────────
+            16 {
+                try {
+                    $shares = Get-SmbShare -ErrorAction Stop | Where-Object {
+                        $_.Name -notmatch '^\w\$' -and $_.Name -ne "IPC$" -and $_.Name -ne "ADMIN$"
+                    }
+                    $bad = $false
+                    foreach ($sh in $shares) {
+                        $access = Get-SmbShareAccess -Name $sh.Name -ErrorAction SilentlyContinue
+                        if ($access | Where-Object { $_.AccountName -match "Everyone|所有人" -and $_.AccessRight -eq "Full" }) {
+                            $bad = $true; break
+                        }
+                    }
+                    $results["No Everyone:FullControl Shares"] = (-not $bad)
+                } catch {
+                    $results["No Everyone:FullControl Shares"] = $null
+                }
+            }
+
+            # ─── 17. IIS 安全 ────────────────────────────────────────
+            17 {
+                try {
+                    Import-Module WebAdministration -ErrorAction Stop
+                    $browse = Get-WebConfigurationProperty -Filter /system.webServer/directoryBrowse -PSPath "IIS:\Sites\Default Web Site" -Name enabled -ErrorAction Stop
+                    $results["Directory Browsing Disabled"] = ($browse.Value -eq $false)
+                } catch {
+                    # IIS not installed or not applicable
+                    $results["Directory Browsing Disabled"] = $null
+                }
+            }
+
+            # ─── 18. DNS 安全 ────────────────────────────────────────
+            18 {
+                try {
+                    $zones = Get-DnsServerZone -ErrorAction Stop | Where-Object { $_.IsReverseLookupZone -eq $false -and $_.ZoneType -ne "Forwarder" }
+                    $allGood = $true
+                    foreach ($z in $zones) {
+                        $zt = Get-DnsServerZone -Name $z.ZoneName -ErrorAction Stop
+                        if ($zt.SecureSecondaries -ne "NoTransfer" -and $zt.SecureSecondaries -ne 3) {
+                            $allGood = $false; break
+                        }
+                    }
+                    $results["Zone Transfer Disabled"] = $allGood
+                } catch {
+                    $results["Zone Transfer Disabled"] = $null
+                }
+            }
+
+            # ─── 19. LDAP 安全 ───────────────────────────────────────
+            19 {
+                $v = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters" "LDAPServerIntegrity"
+                if ($null -eq $v) {
+                    $v = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\ldap" "LDAPServerIntegrity"
+                }
+                $results["LDAPServerIntegrity >= 1"] = ($null -ne $v -and [int]$v -ge 1)
+            }
+
+            # ─── 20. 網路驗證等級 ────────────────────────────────────
+            20 {
+                $v = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" "LmCompatibilityLevel"
+                $results["LmCompatibilityLevel >= 3"] = ($null -ne $v -and [int]$v -ge 3)
+            }
+
+            # ─── 22. PowerShell 日誌 ─────────────────────────────────
+            22 {
+                $v = Get-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" "EnableScriptBlockLogging"
+                $results["EnableScriptBlockLogging = 1"] = ($null -ne $v -and [int]$v -eq 1)
+            }
+
+            # ─── 23. Windows Update ──────────────────────────────────
+            23 {
+                try {
+                    $s = Get-Service -Name wuauserv -ErrorAction Stop
+                    $results["wuauserv Running"] = ($s.Status -eq "Running")
+                } catch {
+                    $results["wuauserv Running"] = $null
+                }
+                $v = Get-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "NoAutoUpdate"
+                $results["NoAutoUpdate != 1"] = ($null -eq $v -or [int]$v -ne 1)
+            }
+
+            # ─── 24. 登錄檔安全 ──────────────────────────────────────
+            24 {
+                $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" "NoDriveTypeAutoRun"
+                $results["NoDriveTypeAutoRun = 255"] = ($null -ne $v -and [int]$v -eq 255)
+
+                $v = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" "NoLMHash"
+                $results["NoLMHash = 1"] = ($null -ne $v -and [int]$v -eq 1)
+
+                $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "DisableCAD"
+                $results["DisableCAD = 0"] = ($null -ne $v -and [int]$v -eq 0)
+            }
+
+            default { $results["Unknown Challenge"] = $null }
+        }
+    } catch {
+        # Failsafe - mark everything as warning
+        $ch = $script:Challenges | Where-Object { $_.Id -eq $Id }
+        if ($ch) {
+            foreach ($ck in $ch.Checks) { $results[$ck] = $null }
+        }
+    }
+
+    # Update state
+    $state = $script:ChallengeState[$Id]
+    $state.CheckResults = $results
+    $passed = ($results.Values | Where-Object { $_ -eq $true }).Count
+    $total  = $results.Count
+    $warns  = ($results.Values | Where-Object { $_ -eq $null }).Count
+    $state.PassedCount = $passed
+    $state.TotalCount  = $total
+
+    if ($warns -eq $total) {
+        $state.Status = "Warning"
+    } elseif ($passed -eq $total) {
+        $state.Status = "Passed"
+    } else {
+        $state.Status = "Failed"
+    }
+
+    return $results
+}
+
+# ══════════════════════════════════════════════════════════════════════
+# SECTION 3 - XAML GUI DEFINITION
+# ══════════════════════════════════════════════════════════════════════
+
+$xaml = @'
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="&#x1F6E1;&#xFE0F; Windows AD Security Hardening Platform"
+    Width="1200" Height="800"
+    WindowStartupLocation="CenterScreen"
+    Background="#0a0a0a"
+    ResizeMode="CanResizeWithGrip"
+    FontFamily="Consolas">
+
+    <Window.Resources>
+        <!-- Glow button style -->
+        <Style x:Key="GlowButton" TargetType="Button">
+            <Setter Property="Background" Value="#1a1a2e"/>
+            <Setter Property="Foreground" Value="#00ff41"/>
+            <Setter Property="BorderBrush" Value="#00ff41"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#00ff41" BlurRadius="0" ShadowDepth="0" Opacity="0"/>
+                            </Border.Effect>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#0f3d0f"/>
+                                <Setter TargetName="bd" Property="Effect">
+                                    <Setter.Value>
+                                        <DropShadowEffect Color="#00ff41" BlurRadius="15" ShadowDepth="0" Opacity="0.7"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#00ff41"/>
+                                <Setter Property="Foreground" Value="#0a0a0a"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Cyan accent button -->
+        <Style x:Key="CyanButton" TargetType="Button" BasedOn="{StaticResource GlowButton}">
+            <Setter Property="Foreground" Value="#00d4ff"/>
+            <Setter Property="BorderBrush" Value="#00d4ff"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd"
+                                Background="#1a1a2e"
+                                BorderBrush="#00d4ff"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#00d4ff" BlurRadius="0" ShadowDepth="0" Opacity="0"/>
+                            </Border.Effect>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#0f2d3d"/>
+                                <Setter TargetName="bd" Property="Effect">
+                                    <Setter.Value>
+                                        <DropShadowEffect Color="#00d4ff" BlurRadius="15" ShadowDepth="0" Opacity="0.7"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#00d4ff"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Red button -->
+        <Style x:Key="RedButton" TargetType="Button" BasedOn="{StaticResource GlowButton}">
+            <Setter Property="Foreground" Value="#ff0040"/>
+            <Setter Property="BorderBrush" Value="#ff0040"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd"
+                                Background="#1a1a2e"
+                                BorderBrush="#ff0040"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#ff0040" BlurRadius="0" ShadowDepth="0" Opacity="0"/>
+                            </Border.Effect>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#3d0f1a"/>
+                                <Setter TargetName="bd" Property="Effect">
+                                    <Setter.Value>
+                                        <DropShadowEffect Color="#ff0040" BlurRadius="15" ShadowDepth="0" Opacity="0.7"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ScrollBar style for dark theme -->
+        <Style TargetType="ScrollViewer">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <!-- Layer 0: Matrix Rain Canvas -->
+        <Canvas x:Name="MatrixCanvas" ClipToBounds="True" IsHitTestVisible="False"/>
+
+        <!-- Layer 1: Semi-transparent overlay for readability -->
+        <Border Background="#0a0a0a" Opacity="0.82" IsHitTestVisible="False"/>
+
+        <!-- Layer 2: Main Content -->
+        <DockPanel>
+
+            <!-- ─── TOP BAR ─────────────────────────────────────── -->
+            <Border DockPanel.Dock="Top" Background="#0d1117" BorderBrush="#00ff41" BorderThickness="0,0,0,1" Padding="20,12">
+                <Border.Effect>
+                    <DropShadowEffect Color="#00ff41" BlurRadius="10" ShadowDepth="0" Opacity="0.3"/>
+                </Border.Effect>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="&#x1F6E1;&#xFE0F;" FontSize="22" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBlock x:Name="TitleText" Text="WINDOWS AD SECURITY HARDENING" FontSize="18" FontWeight="Bold" Foreground="#00ff41" VerticalAlignment="Center">
+                            <TextBlock.Effect>
+                                <DropShadowEffect Color="#00ff41" BlurRadius="8" ShadowDepth="0" Opacity="0.6"/>
+                            </TextBlock.Effect>
+                        </TextBlock>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Vertical" Margin="40,0" VerticalAlignment="Center">
+                        <ProgressBar x:Name="GlobalProgress" Height="8" Value="0" Maximum="100"
+                                     Background="#1a1a2e" Foreground="#00ff41" BorderThickness="0">
+                        </ProgressBar>
+                        <TextBlock x:Name="ProgressLabel" Text="0 / 25 challenges verified" Foreground="#555555" FontSize="10" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                    </StackPanel>
+
+                    <Border Grid.Column="2" Background="#1a1a2e" BorderBrush="#00ff41" BorderThickness="1" CornerRadius="6" Padding="16,6">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="SCORE: " Foreground="#888888" FontSize="16" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="ScoreText" Text="0/0" FontSize="20" FontWeight="Bold" Foreground="#00ff41" VerticalAlignment="Center">
+                                <TextBlock.Effect>
+                                    <DropShadowEffect Color="#00ff41" BlurRadius="6" ShadowDepth="0" Opacity="0.5"/>
+                                </TextBlock.Effect>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <!-- ─── BOTTOM BAR ──────────────────────────────────── -->
+            <Border DockPanel.Dock="Bottom" Background="#0d1117" BorderBrush="#00ff41" BorderThickness="0,1,0,0" Padding="20,10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Button x:Name="VerifyAllBtn" Grid.Column="0" Content="&#x26A1; 驗證全部 (Verify All)" Style="{StaticResource GlowButton}" FontSize="14" Margin="0,0,12,0"/>
+                    <Button x:Name="RefreshBtn" Grid.Column="1" Content="&#x1F504; 重新整理 (Refresh)" Style="{StaticResource CyanButton}" FontSize="14"/>
+
+                    <TextBlock x:Name="StatusText" Grid.Column="3" Text="Ready..." Foreground="#555555" FontSize="12" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <!-- ─── MAIN CARD AREA ──────────────────────────────── -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="10">
+                <WrapPanel x:Name="CardPanel" Orientation="Horizontal" Margin="10" ItemWidth="275" ItemHeight="210"/>
+            </ScrollViewer>
+
+        </DockPanel>
+    </Grid>
+</Window>
+'@
+
+# ══════════════════════════════════════════════════════════════════════
+# SECTION 4 - BUILD WINDOW
+# ══════════════════════════════════════════════════════════════════════
+
+$reader  = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($xaml))
+$window  = [System.Windows.Markup.XamlReader]::Load($reader)
+
+# Named-element accessors
+$matrixCanvas  = $window.FindName("MatrixCanvas")
+$cardPanel     = $window.FindName("CardPanel")
+$globalProgress = $window.FindName("GlobalProgress")
+$progressLabel = $window.FindName("ProgressLabel")
+$scoreText     = $window.FindName("ScoreText")
+$verifyAllBtn  = $window.FindName("VerifyAllBtn")
+$refreshBtn    = $window.FindName("RefreshBtn")
+$statusText    = $window.FindName("StatusText")
+
+# ══════════════════════════════════════════════════════════════════════
+# SECTION 5 - MATRIX RAIN ANIMATION
+# ══════════════════════════════════════════════════════════════════════
+
+$script:MatrixColumns   = @()
+$script:MatrixFontSize  = 14
+$script:MatrixChars     = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン"
+$script:MatrixRandom    = [System.Random]::new()
+
+function Initialize-MatrixColumns {
+    $cols = [Math]::Ceiling($matrixCanvas.ActualWidth / $script:MatrixFontSize)
+    if ($cols -le 0) { $cols = 80 }
+    $script:MatrixColumns = @()
+    for ($i = 0; $i -lt $cols; $i++) {
+        $script:MatrixColumns += @{
+            Y      = $script:MatrixRandom.Next(-40, 0) * $script:MatrixFontSize
+            Speed  = $script:MatrixRandom.Next(2, 7)
+            Length = $script:MatrixRandom.Next(8, 28)
+        }
+    }
+}
+
+$matrixTimer = [System.Windows.Threading.DispatcherTimer]::new()
+$matrixTimer.Interval = [TimeSpan]::FromMilliseconds(50)
+$matrixTimer.Add_Tick({
+    $canvas = $matrixCanvas
+    $canvas.Children.Clear()
+
+    $canvasH = $canvas.ActualHeight
+    $canvasW = $canvas.ActualWidth
+    if ($canvasH -le 0 -or $canvasW -le 0) { return }
+
+    $fontSize = $script:MatrixFontSize
+    $chars    = $script:MatrixChars
+    $rnd      = $script:MatrixRandom
+
+    for ($i = 0; $i -lt $script:MatrixColumns.Count; $i++) {
+        $col = $script:MatrixColumns[$i]
+        $x   = $i * $fontSize
+
+        # Draw trail
+        for ($j = 0; $j -lt $col.Length; $j++) {
+            $y = $col.Y - $j * $fontSize
+            if ($y -lt -$fontSize -or $y -gt $canvasH) { continue }
+
+            $ch = $chars[$rnd.Next($chars.Length)]
+            $tb = [System.Windows.Controls.TextBlock]::new()
+            $tb.Text     = [string]$ch
+            $tb.FontSize = $fontSize
+            $tb.FontFamily = [System.Windows.Media.FontFamily]::new("Consolas")
+
+            # Head is bright, trail fades
+            if ($j -eq 0) {
+                $tb.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(230, 0, 255, 65))
+            } else {
+                $alpha = [Math]::Max(0, [int](180 * (1 - $j / $col.Length)))
+                $green = [Math]::Max(40, [int](255 * (1 - $j / $col.Length)))
+                $tb.Foreground = [System.Windows.Media.SolidColorBrush]::new(
+                    [System.Windows.Media.Color]::FromArgb($alpha, 0, $green, 20)
+                )
+            }
+
+            [System.Windows.Controls.Canvas]::SetLeft($tb, $x)
+            [System.Windows.Controls.Canvas]::SetTop($tb, $y)
+            $canvas.Children.Add($tb) | Out-Null
+        }
+
+        # Advance
+        $col.Y += $col.Speed
+        if (($col.Y - $col.Length * $fontSize) -gt $canvasH) {
+            $col.Y     = -$fontSize * $rnd.Next(3, 15)
+            $col.Speed = $rnd.Next(2, 7)
+            $col.Length = $rnd.Next(8, 28)
+        }
+    }
+})
+
+# Reinitialize on resize
+$window.Add_SizeChanged({ Initialize-MatrixColumns })
+
+# ══════════════════════════════════════════════════════════════════════
+# SECTION 6 - DYNAMIC CARD GENERATION
+# ══════════════════════════════════════════════════════════════════════
+
+# Store references to UI elements per card
+$script:CardControls = @{}
+
+function New-ChallengeCard {
+    param($Challenge)
+
+    $id   = $Challenge.Id
+    $cat  = $Challenge.Category
+    $clr  = $Challenge.Color
+    $title = $Challenge.Title
+    $total = $Challenge.Checks.Count
+
+    # Outer card border
+    $card = [System.Windows.Controls.Border]::new()
+    $card.Width       = 255
+    $card.Height      = 190
+    $card.Margin      = [System.Windows.Thickness]::new(8)
+    $card.Padding     = [System.Windows.Thickness]::new(14)
+    $card.CornerRadius = [System.Windows.CornerRadius]::new(8)
+    $card.BorderThickness = [System.Windows.Thickness]::new(1)
+    $card.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#1e2a1e"))
+    $card.Background  = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#0d1117"))
+    $card.Cursor      = [System.Windows.Input.Cursors]::Hand
+
+    # Glow effect (subtle)
+    $shadow = [System.Windows.Media.Effects.DropShadowEffect]::new()
+    $shadow.Color       = [System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41")
+    $shadow.BlurRadius  = 4
+    $shadow.ShadowDepth = 0
+    $shadow.Opacity     = 0.15
+    $card.Effect = $shadow
+
+    # Hover effect
+    $card.Add_MouseEnter({
+        param($sender, $e)
+        $eff = $sender.Effect
+        $eff.BlurRadius = 18
+        $eff.Opacity    = 0.5
+        $sender.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+    })
+    $card.Add_MouseLeave({
+        param($sender, $e)
+        $eff = $sender.Effect
+        $eff.BlurRadius = 4
+        $eff.Opacity    = 0.15
+        $sender.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#1e2a1e"))
+    })
+
+    # Inner layout
+    $stack = [System.Windows.Controls.StackPanel]::new()
+
+    # ── Row 1: Badge + Title ──
+    $headerPanel = [System.Windows.Controls.DockPanel]::new()
+
+    # Number badge (circle)
+    $badge = [System.Windows.Controls.Border]::new()
+    $badge.Width  = 30
+    $badge.Height = 30
+    $badge.CornerRadius = [System.Windows.CornerRadius]::new(15)
+    $badge.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+    $badge.Margin = [System.Windows.Thickness]::new(0,0,10,0)
+    $badgeText = [System.Windows.Controls.TextBlock]::new()
+    $badgeText.Text = "$id"
+    $badgeText.FontSize = 13
+    $badgeText.FontWeight = [System.Windows.FontWeights]::Bold
+    $badgeText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#0a0a0a"))
+    $badgeText.HorizontalAlignment = "Center"
+    $badgeText.VerticalAlignment   = "Center"
+    $badge.Child = $badgeText
+    [System.Windows.Controls.DockPanel]::SetDock($badge, "Left")
+    $headerPanel.Children.Add($badge) | Out-Null
+
+    # Title
+    $titleBlock = [System.Windows.Controls.TextBlock]::new()
+    $titleBlock.Text = $title
+    $titleBlock.FontSize = 14
+    $titleBlock.FontWeight = [System.Windows.FontWeights]::Bold
+    $titleBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Colors]::White)
+    $titleBlock.VerticalAlignment = "Center"
+    $titleBlock.TextTrimming = "CharacterEllipsis"
+    $headerPanel.Children.Add($titleBlock) | Out-Null
+
+    $stack.Children.Add($headerPanel) | Out-Null
+
+    # ── Row 2: Category tag ──
+    $tagBorder = [System.Windows.Controls.Border]::new()
+    $tagBorder.Background   = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($clr + "33"))
+    $tagBorder.BorderBrush  = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($clr))
+    $tagBorder.BorderThickness = [System.Windows.Thickness]::new(1)
+    $tagBorder.CornerRadius = [System.Windows.CornerRadius]::new(4)
+    $tagBorder.Padding      = [System.Windows.Thickness]::new(8,2,8,2)
+    $tagBorder.Margin       = [System.Windows.Thickness]::new(0,8,0,0)
+    $tagBorder.HorizontalAlignment = "Left"
+    $tagText = [System.Windows.Controls.TextBlock]::new()
+    $tagText.Text = $cat
+    $tagText.FontSize = 11
+    $tagText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($clr))
+    $tagBorder.Child = $tagText
+    $stack.Children.Add($tagBorder) | Out-Null
+
+    # ── Row 3: Status ──
+    $statusBlock = [System.Windows.Controls.TextBlock]::new()
+    $statusBlock.Text = [char]0x23F3 + " Pending"
+    $statusBlock.FontSize = 13
+    $statusBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#888888"))
+    $statusBlock.Margin = [System.Windows.Thickness]::new(0,8,0,0)
+    $stack.Children.Add($statusBlock) | Out-Null
+
+    # ── Row 4: Sub-checks count ──
+    $checksBlock = [System.Windows.Controls.TextBlock]::new()
+    $checksBlock.Text = "0/$total checks"
+    $checksBlock.FontSize = 11
+    $checksBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#555555"))
+    $checksBlock.Margin = [System.Windows.Thickness]::new(0,4,0,0)
+    $stack.Children.Add($checksBlock) | Out-Null
+
+    # ── Row 5: Buttons ──
+    $btnPanel = [System.Windows.Controls.StackPanel]::new()
+    $btnPanel.Orientation = "Horizontal"
+    $btnPanel.Margin      = [System.Windows.Thickness]::new(0,10,0,0)
+
+    # Verify button
+    $verifyBtn = [System.Windows.Controls.Button]::new()
+    $verifyBtn.Content = "Verify"
+    $verifyBtn.FontFamily = [System.Windows.Media.FontFamily]::new("Consolas")
+    $verifyBtn.FontSize = 12
+    $verifyBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+    $verifyBtn.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#1a1a2e"))
+    $verifyBtn.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+    $verifyBtn.BorderThickness = [System.Windows.Thickness]::new(1)
+    $verifyBtn.Padding    = [System.Windows.Thickness]::new(14,4,14,4)
+    $verifyBtn.Cursor     = [System.Windows.Input.Cursors]::Hand
+    $verifyBtn.Tag        = $id
+
+    $verifyBtn.Add_Click({
+        param($sender, $e)
+        $cid = $sender.Tag
+        $e.Handled = $true
+        $script:StatusText.Text = "Verifying challenge #$cid ..."
+        $window.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Background, [Action]{})
+        Verify-Challenge -Id $cid | Out-Null
+        Update-CardUI -Id $cid
+        Update-GlobalStats
+        $script:StatusText.Text = "Last verified: $(Get-Date -Format 'HH:mm:ss')"
+    }.GetNewClosure())
+    $btnPanel.Children.Add($verifyBtn) | Out-Null
+
+    # Details button
+    $detailBtn = [System.Windows.Controls.Button]::new()
+    $detailBtn.Content = "Details"
+    $detailBtn.FontFamily = [System.Windows.Media.FontFamily]::new("Consolas")
+    $detailBtn.FontSize = 12
+    $detailBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00d4ff"))
+    $detailBtn.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#1a1a2e"))
+    $detailBtn.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00d4ff"))
+    $detailBtn.BorderThickness = [System.Windows.Thickness]::new(1)
+    $detailBtn.Padding    = [System.Windows.Thickness]::new(14,4,14,4)
+    $detailBtn.Margin     = [System.Windows.Thickness]::new(8,0,0,0)
+    $detailBtn.Cursor     = [System.Windows.Input.Cursors]::Hand
+    $detailBtn.Tag        = $id
+
+    $detailBtn.Add_Click({
+        param($sender, $e)
+        $cid = $sender.Tag
+        $e.Handled = $true
+        Show-DetailPopup -Id $cid
+    }.GetNewClosure())
+    $btnPanel.Children.Add($detailBtn) | Out-Null
+
+    $stack.Children.Add($btnPanel) | Out-Null
+
+    $card.Child = $stack
+
+    # Click on card to show details
+    $card.Add_MouseLeftButtonUp({
+        param($sender, $e)
+        # Only fire if not from a button
+        if ($e.OriginalSource -isnot [System.Windows.Controls.Button]) {
+            # nothing - handled by button clicks
+        }
+    })
+
+    # Store references
+    $script:CardControls[$id] = @{
+        Card        = $card
+        StatusBlock = $statusBlock
+        ChecksBlock = $checksBlock
+        Badge       = $badge
+    }
+
+    return $card
+}
+
+function Update-CardUI {
+    param([int]$Id)
+    $state = $script:ChallengeState[$Id]
+    $ctrl  = $script:CardControls[$Id]
+    if (-not $ctrl) { return }
+
+    $passed = $state.PassedCount
+    $total  = $state.TotalCount
+
+    switch ($state.Status) {
+        "Passed" {
+            $ctrl.StatusBlock.Text = [char]0x2705 + " Passed"
+            $ctrl.StatusBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+            $ctrl.Badge.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+            $ctrl.Card.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+        }
+        "Failed" {
+            $ctrl.StatusBlock.Text = [char]0x274C + " Failed"
+            $ctrl.StatusBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ff0040"))
+            $ctrl.Badge.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ff0040"))
+            $ctrl.Card.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ff0040"))
+        }
+        "Warning" {
+            $ctrl.StatusBlock.Text = [char]0x26A0 + " Warning"
+            $ctrl.StatusBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ffaa00"))
+            $ctrl.Badge.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ffaa00"))
+            $ctrl.Card.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ffaa00"))
+        }
+        default {
+            $ctrl.StatusBlock.Text = [char]0x23F3 + " Pending"
+            $ctrl.StatusBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#888888"))
+        }
+    }
+    $ctrl.ChecksBlock.Text = "$passed/$total checks passed"
+    if ($passed -eq $total -and $total -gt 0) {
+        $ctrl.ChecksBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+    } elseif ($passed -gt 0) {
+        $ctrl.ChecksBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ffaa00"))
+    } else {
+        $ctrl.ChecksBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#555555"))
+    }
+}
+
+function Update-GlobalStats {
+    $verified  = 0
+    $totalPass = 0
+    $totalAll  = 0
+    foreach ($c in $script:Challenges) {
+        $s = $script:ChallengeState[$c.Id]
+        if ($s.Status -ne "Pending") { $verified++ }
+        $totalPass += $s.PassedCount
+        $totalAll  += $s.TotalCount
+    }
+    $pct = if ($script:Challenges.Count -gt 0) { [Math]::Round($verified / $script:Challenges.Count * 100) } else { 0 }
+    $globalProgress.Value = $pct
+    $progressLabel.Text   = "$verified / $($script:Challenges.Count) challenges verified"
+    $scoreText.Text       = "$totalPass/$totalAll"
+}
+
+# ══════════════════════════════════════════════════════════════════════
+# SECTION 7 - DETAIL POPUP
+# ══════════════════════════════════════════════════════════════════════
+
+function Show-DetailPopup {
+    param([int]$Id)
+
+    $ch    = $script:Challenges | Where-Object { $_.Id -eq $Id }
+    $state = $script:ChallengeState[$Id]
+    if (-not $ch) { return }
+
+    $popup = [System.Windows.Window]::new()
+    $popup.Title = "Challenge #$Id - $($ch.Title)"
+    $popup.Width  = 520
+    $popup.SizeToContent = "Height"
+    $popup.MaxHeight = 600
+    $popup.WindowStartupLocation = "CenterOwner"
+    $popup.Owner      = $window
+    $popup.Background  = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#0d1117"))
+    $popup.Foreground  = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Colors]::White)
+    $popup.FontFamily  = [System.Windows.Media.FontFamily]::new("Consolas")
+    $popup.ResizeMode  = "NoResize"
+    $popup.WindowStyle = "None"
+    $popup.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+    $popup.BorderThickness = [System.Windows.Thickness]::new(1)
+    $popup.AllowsTransparency = $false
+
+    $mainStack = [System.Windows.Controls.StackPanel]::new()
+    $mainStack.Margin = [System.Windows.Thickness]::new(20)
+
+    # Header
+    $header = [System.Windows.Controls.TextBlock]::new()
+    $header.Text = "[ Challenge #$Id ] $($ch.Title)"
+    $header.FontSize = 16
+    $header.FontWeight = [System.Windows.FontWeights]::Bold
+    $header.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+    $header.Margin = [System.Windows.Thickness]::new(0,0,0,6)
+    $mainStack.Children.Add($header) | Out-Null
+
+    # Category
+    $catBlock = [System.Windows.Controls.TextBlock]::new()
+    $catBlock.Text = "Category: $($ch.Category)"
+    $catBlock.FontSize = 12
+    $catBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($ch.Color))
+    $catBlock.Margin = [System.Windows.Thickness]::new(0,0,0,14)
+    $mainStack.Children.Add($catBlock) | Out-Null
+
+    # Separator
+    $sep = [System.Windows.Controls.Border]::new()
+    $sep.Height = 1
+    $sep.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#1e2a1e"))
+    $sep.Margin = [System.Windows.Thickness]::new(0,0,0,14)
+    $mainStack.Children.Add($sep) | Out-Null
+
+    # Check results
+    if ($state.CheckResults.Count -eq 0) {
+        $noData = [System.Windows.Controls.TextBlock]::new()
+        $noData.Text = "No verification data. Click 'Verify' first."
+        $noData.FontSize = 12
+        $noData.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#888888"))
+        $noData.Margin = [System.Windows.Thickness]::new(0,0,0,10)
+        $mainStack.Children.Add($noData) | Out-Null
+    } else {
+        foreach ($key in $state.CheckResults.Keys) {
+            $val = $state.CheckResults[$key]
+            $row = [System.Windows.Controls.StackPanel]::new()
+            $row.Orientation = "Horizontal"
+            $row.Margin = [System.Windows.Thickness]::new(0,0,0,8)
+
+            $icon = [System.Windows.Controls.TextBlock]::new()
+            $icon.FontSize = 14
+            $icon.Width = 26
+            $nameBlock = [System.Windows.Controls.TextBlock]::new()
+            $nameBlock.FontSize = 13
+            $nameBlock.VerticalAlignment = "Center"
+            $nameBlock.TextWrapping = "Wrap"
+            $nameBlock.MaxWidth = 420
+
+            if ($val -eq $true) {
+                $icon.Text = [char]0x2705
+                $nameBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#00ff41"))
+            } elseif ($val -eq $false) {
+                $icon.Text = [char]0x274C
+                $nameBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ff0040"))
+            } else {
+                $icon.Text = [char]0x26A0
+                $nameBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ffaa00"))
+            }
+
+            $nameBlock.Text = $key
+
+            $row.Children.Add($icon) | Out-Null
+            $row.Children.Add($nameBlock) | Out-Null
+            $mainStack.Children.Add($row) | Out-Null
+        }
+    }
+
+    # Separator
+    $sep2 = [System.Windows.Controls.Border]::new()
+    $sep2.Height = 1
+    $sep2.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#1e2a1e"))
+    $sep2.Margin = [System.Windows.Thickness]::new(0,14,0,14)
+    $mainStack.Children.Add($sep2) | Out-Null
+
+    # Close button
+    $closeBtn = [System.Windows.Controls.Button]::new()
+    $closeBtn.Content  = "Close"
+    $closeBtn.FontFamily = [System.Windows.Media.FontFamily]::new("Consolas")
+    $closeBtn.FontSize = 13
+    $closeBtn.Foreground  = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ff0040"))
+    $closeBtn.Background  = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#1a1a2e"))
+    $closeBtn.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#ff0040"))
+    $closeBtn.BorderThickness = [System.Windows.Thickness]::new(1)
+    $closeBtn.Padding  = [System.Windows.Thickness]::new(20,6,20,6)
+    $closeBtn.HorizontalAlignment = "Right"
+    $closeBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $closeBtn.Add_Click({ $popup.Close() }.GetNewClosure())
+    $mainStack.Children.Add($closeBtn) | Out-Null
+
+    # Allow dragging
+    $mainStack.Add_MouseLeftButtonDown({
+        param($s,$e)
+        try { $popup.DragMove() } catch {}
+    }.GetNewClosure())
+
+    $scrollView = [System.Windows.Controls.ScrollViewer]::new()
+    $scrollView.VerticalScrollBarVisibility = "Auto"
+    $scrollView.Content = $mainStack
+
+    $popup.Content = $scrollView
+    $popup.ShowDialog() | Out-Null
+}
+
+# ══════════════════════════════════════════════════════════════════════
+# SECTION 8 - POPULATE CARDS & WIRE EVENTS
+# ══════════════════════════════════════════════════════════════════════
+
+# Store StatusText reference for closures
+$script:StatusText = $statusText
+
+foreach ($ch in $script:Challenges) {
+    $card = New-ChallengeCard -Challenge $ch
+    $cardPanel.Children.Add($card) | Out-Null
+}
+
+# ── Verify All Button ────────────────────────────────────────────────
+$verifyAllBtn.Add_Click({
+    $verifyAllBtn.IsEnabled = $false
+    $statusText.Text = "Running all verifications..."
+    $window.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Background, [Action]{})
+
+    $count = 0
+    foreach ($ch in $script:Challenges) {
+        $count++
+        $statusText.Text = "Verifying [$count/$($script:Challenges.Count)] $($ch.Title)..."
+        $window.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Background, [Action]{})
+
+        Verify-Challenge -Id $ch.Id | Out-Null
+        Update-CardUI -Id $ch.Id
+        Update-GlobalStats
+    }
+
+    $statusText.Text = "All verified at $(Get-Date -Format 'HH:mm:ss')"
+    $verifyAllBtn.IsEnabled = $true
+})
+
+# ── Refresh Button ───────────────────────────────────────────────────
+$refreshBtn.Add_Click({
+    # Reset all states
+    foreach ($c in $script:Challenges) {
+        $script:ChallengeState[$c.Id] = @{
+            Status       = "Pending"
+            CheckResults = @{}
+            PassedCount  = 0
+            TotalCount   = $c.Checks.Count
+        }
+        Update-CardUI -Id $c.Id
+    }
+    Update-GlobalStats
+    $script:SeceditCache = $null
+    $statusText.Text = "Reset - Ready..."
+})
+
+# ══════════════════════════════════════════════════════════════════════
+# SECTION 9 - LAUNCH
+# ══════════════════════════════════════════════════════════════════════
+
+$window.Add_ContentRendered({
+    Initialize-MatrixColumns
+    $matrixTimer.Start()
+})
+
+$window.Add_Closed({
+    $matrixTimer.Stop()
+    # Cleanup temp file
+    if (Test-Path $script:SeceditTempFile) {
+        Remove-Item $script:SeceditTempFile -Force -ErrorAction SilentlyContinue
+    }
+})
+
+# Show the window
+$window.ShowDialog() | Out-Null
