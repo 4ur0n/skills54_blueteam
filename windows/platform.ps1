@@ -31,27 +31,27 @@ $script:Challenges = @(
     @{ Id=5;  Title="稽核策略";         Category="歷屆必考"; Color="#ff6600"; Checks=@("Account Logon Audit","Logon/Logoff Audit","Object Access Audit","Policy Change Audit","System Audit") }
     @{ Id=6;  Title="Windows 防火牆";   Category="歷屆必考"; Color="#ff6600"; Checks=@("Domain 設定檔已啟用","Domain 預設拒絕輸入","Private 設定檔已啟用","Private 預設拒絕輸入","Public 設定檔已啟用","Public 預設拒絕輸入") }
     @{ Id=7;  Title="Windows Installer"; Category="歷屆必考"; Color="#ff6600"; Checks=@("DisablePatchUninstall = 1") }
-    @{ Id=8;  Title="權限配置";         Category="歷屆必考"; Color="#ff6600"; Checks=@("No Everyone:FullControl on SensitiveData") }
+    @{ Id=8;  Title="權限配置";         Category="歷屆必考"; Color="#ff6600"; Checks=@("C:\\SensitiveData 資料夾存在","無 Everyone:FullControl","擁有者為 Administrators") }
 
     # -- Category 2: high probability --
     @{ Id=9;  Title="遠端桌面安全";     Category="高機率"; Color="#00d4ff"; Checks=@("NLA 網路等級驗證已啟用","安全層級 >= SSL (SecurityLayer >= 2)","加密層級 = 高 (MinEncryptionLevel >= 3)","限制空白密碼遠端登入") }
-    @{ Id=10; Title="事件記錄檔";       Category="高機率"; Color="#00d4ff"; Checks=@("Security Log >= 100 MB","Security Log Retention = OverwriteAsNeeded or DoNotOverwrite") }
+    @{ Id=10; Title="事件記錄檔";       Category="高機率"; Color="#00d4ff"; Checks=@("Security Log >= 200 MB","Application Log >= 100 MB","System Log >= 100 MB","保留原則已設定為不覆寫") }
     @{ Id=11; Title="AD 帳號管理";      Category="高機率"; Color="#00d4ff"; Checks=@("Guest Account Disabled","No Extra Domain Admins","Administrator Renamed") }
-    @{ Id=12; Title="Windows Defender";  Category="高機率"; Color="#00d4ff"; Checks=@("No C:\\ Exclusion","RealTimeProtection Enabled","Registry RealTimeProtection Confirmed") }
+    # Windows Defender 已移除（Server 2022 無此功能）
     @{ Id=13; Title="服務管理";         Category="高機率"; Color="#00d4ff"; Checks=@("RemoteRegistry Stopped","Telnet Stopped","Other Risky Services") }
 
     # -- Category 3: medium probability --
     @{ Id=14; Title="UAC";              Category="中等機率"; Color="#a855f7"; Checks=@("EnableLUA = 1","ConsentPromptBehaviorAdmin = 2") }
     @{ Id=15; Title="排程任務";         Category="中等機率"; Color="#a855f7"; Checks=@("No Suspicious Tasks") }
-    @{ Id=16; Title="共享資料夾";       Category="中等機率"; Color="#a855f7"; Checks=@("No Everyone:FullControl Shares") }
-    @{ Id=17; Title="IIS 安全";         Category="中等機率"; Color="#a855f7"; Checks=@("Directory Browsing Disabled") }
+    @{ Id=16; Title="共享資料夾";       Category="中等機率"; Color="#a855f7"; Checks=@("無 Everyone:FullControl 共享","無多餘的自訂共享") }
+    @{ Id=17; Title="IIS 安全";         Category="中等機率"; Color="#a855f7"; Checks=@("IIS 角色已安裝","目錄瀏覽已停用") }
     @{ Id=18; Title="DNS 安全";         Category="中等機率"; Color="#a855f7"; Checks=@("DNS 角色已安裝","Zone Transfer Disabled") }
     @{ Id=19; Title="LDAP 安全";        Category="中等機率"; Color="#a855f7"; Checks=@("LDAPServerIntegrity >= 2") }
     @{ Id=20; Title="網路驗證等級";     Category="中等機率"; Color="#a855f7"; Checks=@("LmCompatibilityLevel >= 3") }
 
     # -- Category 4: low probability --
     @{ Id=22; Title="PowerShell 日誌";  Category="低機率"; Color="#666666"; Checks=@("EnableScriptBlockLogging = 1") }
-    @{ Id=23; Title="Windows Update";   Category="低機率"; Color="#666666"; Checks=@("wuauserv Running","NoAutoUpdate != 1 (Registry)") }
+    @{ Id=23; Title="Windows Update";   Category="低機率"; Color="#666666"; Checks=@("wuauserv 服務執行中","已設定自動更新 (GPO AUOptions = 4)") }
     @{ Id=24; Title="登錄檔安全";       Category="低機率"; Color="#666666"; Checks=@("NoDriveTypeAutoRun = 255","NoLMHash = 1","DisableCAD = 0") }
 )
 
@@ -231,19 +231,24 @@ function global:Verify-Challenge {
 
             # --- 8. permissions ---
             8 {
-                try {
-                    if (Test-Path "C:\SensitiveData") {
+                $exists = Test-Path "C:\SensitiveData"
+                $results["C:\\SensitiveData 資料夾存在"] = $exists
+                if ($exists) {
+                    try {
                         $acl = Get-Acl "C:\SensitiveData" -ErrorAction Stop
                         $bad = $acl.Access | Where-Object {
                             $_.IdentityReference -match "Everyone|所有人" -and
                             $_.FileSystemRights -match "FullControl"
                         }
-                        $results["No Everyone:FullControl on SensitiveData"] = ($null -eq $bad -or $bad.Count -eq 0)
-                    } else {
-                        $results["No Everyone:FullControl on SensitiveData"] = $null
+                        $results["無 Everyone:FullControl"] = ($null -eq $bad -or $bad.Count -eq 0)
+                        $results["擁有者為 Administrators"] = ($acl.Owner -match "Administrators|BUILTIN\\Administrators")
+                    } catch {
+                        $results["無 Everyone:FullControl"] = $false
+                        $results["擁有者為 Administrators"] = $false
                     }
-                } catch {
-                    $results["No Everyone:FullControl on SensitiveData"] = $null
+                } else {
+                    $results["無 Everyone:FullControl"] = $false
+                    $results["擁有者為 Administrators"] = $false
                 }
             }
 
@@ -262,27 +267,31 @@ function global:Verify-Challenge {
                 $results["限制空白密碼遠端登入"] = ($null -eq $blank -or [int]$blank -eq 1)
             }
 
-            # --- 10. event log (stricter: also check retention) ---
+            # --- 10. event log (stricter: check 3 logs + retention) ---
             10 {
+                foreach ($logEntry in @(
+                    @{ Name="Security"; Label="Security Log >= 200 MB"; Min=209715200 },
+                    @{ Name="Application"; Label="Application Log >= 100 MB"; Min=104857600 },
+                    @{ Name="System"; Label="System Log >= 100 MB"; Min=104857600 }
+                )) {
+                    try {
+                        $info = wevtutil gl $logEntry.Name 2>&1 | Out-String
+                        if ($info -match "maxSize:\s*(\d+)") {
+                            $bytes = [long]$Matches[1]
+                            $results[$logEntry.Label] = ($bytes -ge $logEntry.Min)
+                        } else {
+                            $results[$logEntry.Label] = $false
+                        }
+                    } catch {
+                        $results[$logEntry.Label] = $false
+                    }
+                }
+                # Retention: Security log must have retention=true (DoNotOverwrite)
                 try {
-                    $info = wevtutil gl Security 2>&1 | Out-String
-                    if ($info -match "maxSize:\s*(\d+)") {
-                        $bytes = [long]$Matches[1]
-                        $results["Security Log >= 100 MB"] = ($bytes -ge 104857600)
-                    } else {
-                        $results["Security Log >= 100 MB"] = $false
-                    }
-                    # Check retention: "retention: false" means OverwriteAsNeeded (acceptable)
-                    # "retention: true" means DoNotOverwrite (also acceptable, but more strict)
-                    # We just check that it is explicitly set (not "autoBackup" which is another mode)
-                    if ($info -match "retention:\s*(true|false)") {
-                        $results["Security Log Retention = OverwriteAsNeeded or DoNotOverwrite"] = $true
-                    } else {
-                        $results["Security Log Retention = OverwriteAsNeeded or DoNotOverwrite"] = $false
-                    }
+                    $secInfo = wevtutil gl Security 2>&1 | Out-String
+                    $results["保留原則已設定為不覆寫"] = ($secInfo -match "retention:\s*true")
                 } catch {
-                    $results["Security Log >= 100 MB"] = $null
-                    $results["Security Log Retention = OverwriteAsNeeded or DoNotOverwrite"] = $null
+                    $results["保留原則已設定為不覆寫"] = $false
                 }
             }
 
@@ -311,38 +320,9 @@ function global:Verify-Challenge {
                 }
             }
 
-            # --- 12. Windows Defender (stricter: also check registry) ---
+            # --- 12. Windows Defender (已移除，Server 2022 無此功能) ---
             12 {
-                $mpOk = $false
-                $rtOk = $false
-                $exclOk = $false
-                try {
-                    $mp = Get-MpPreference -ErrorAction Stop
-                    $hasExcl = $mp.ExclusionPath -contains "C:\"
-                    $exclOk = (-not $hasExcl)
-                    $rtOk = ($mp.DisableRealtimeMonitoring -ne $true)
-                    $mpOk = $true
-                } catch {
-                    # Get-MpPreference failed, fall back to registry
-                }
-                $results["No C:\\ Exclusion"] = if ($mpOk) { $exclOk } else { $null }
-                $results["RealTimeProtection Enabled"] = if ($mpOk) { $rtOk } else { $null }
-
-                # Registry cross-check for real-time protection
-                $regRt = Get-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" "DisableRealtimeMonitoring"
-                $regRt2 = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows Defender\Real-Time Protection" "DisableRealtimeMonitoring"
-                # If either registry says disabled (value=1), fail
-                $regPass = $true
-                if ($null -ne $regRt -and [int]$regRt -eq 1) { $regPass = $false }
-                if ($null -ne $regRt2 -and [int]$regRt2 -eq 1) { $regPass = $false }
-                # If Get-MpPreference worked, combine; otherwise rely on registry
-                if ($mpOk) {
-                    $results["Registry RealTimeProtection Confirmed"] = $regPass
-                } else {
-                    # Use registry only
-                    $results["RealTimeProtection Enabled"] = $regPass
-                    $results["Registry RealTimeProtection Confirmed"] = $regPass
-                }
+                $results["此題已停用"] = $null
             }
 
             # --- 13. service management ---
@@ -391,13 +371,13 @@ function global:Verify-Challenge {
                 }
             }
 
-            # --- 16. shared folders (stricter: don't pass on error) ---
+            # --- 16. shared folders (stricter: check for bad perms AND extra shares) ---
             16 {
-                $checkDone = $false
                 try {
                     $shares = Get-SmbShare -ErrorAction Stop | Where-Object {
                         $_.Name -notmatch '^\w\$' -and $_.Name -ne "IPC`$" -and $_.Name -ne "ADMIN`$"
                     }
+                    # Check 1: no Everyone:FullControl
                     $bad = $false
                     foreach ($sh in $shares) {
                         try {
@@ -405,27 +385,36 @@ function global:Verify-Challenge {
                             if ($access | Where-Object { $_.AccountName -match "Everyone|所有人" -and $_.AccessRight -eq "Full" }) {
                                 $bad = $true; break
                             }
-                        } catch {
-                            # If we can't read access, treat as suspicious
-                            $bad = $true; break
-                        }
+                        } catch { $bad = $true; break }
                     }
-                    $results["No Everyone:FullControl Shares"] = (-not $bad)
-                    $checkDone = $true
+                    $results["無 Everyone:FullControl 共享"] = (-not $bad)
+                    # Check 2: no extra custom shares (setup.ps1 creates OpenShare etc.)
+                    $customShares = $shares | Where-Object { $_.Name -notmatch '^(NETLOGON|SYSVOL|print\$)$' }
+                    $results["無多餘的自訂共享"] = ($null -eq $customShares -or @($customShares).Count -eq 0)
                 } catch {
-                    # Error getting shares = fail, not warning
-                    $results["No Everyone:FullControl Shares"] = $false
+                    $results["無 Everyone:FullControl 共享"] = $false
+                    $results["無多餘的自訂共享"] = $false
                 }
             }
 
-            # --- 17. IIS security ---
+            # --- 17. IIS security (check if installed first) ---
             17 {
+                $iisInstalled = $false
                 try {
-                    Import-Module WebAdministration -ErrorAction Stop
-                    $browse = Get-WebConfigurationProperty -Filter /system.webServer/directoryBrowse -PSPath "IIS:\Sites\Default Web Site" -Name enabled -ErrorAction Stop
-                    $results["Directory Browsing Disabled"] = ($browse.Value -eq $false)
-                } catch {
-                    $results["Directory Browsing Disabled"] = $null
+                    $iisFeat = Get-WindowsFeature -Name Web-Server -ErrorAction Stop
+                    $iisInstalled = ($iisFeat.InstallState -eq "Installed")
+                } catch { }
+                $results["IIS 角色已安裝"] = $iisInstalled
+                if ($iisInstalled) {
+                    try {
+                        Import-Module WebAdministration -ErrorAction Stop
+                        $browse = Get-WebConfigurationProperty -Filter /system.webServer/directoryBrowse -PSPath "IIS:\Sites\Default Web Site" -Name enabled -ErrorAction Stop
+                        $results["目錄瀏覽已停用"] = ($browse.Value -eq $false)
+                    } catch {
+                        $results["目錄瀏覽已停用"] = $false
+                    }
+                } else {
+                    $results["目錄瀏覽已停用"] = $false
                 }
             }
 
@@ -446,8 +435,7 @@ function global:Verify-Challenge {
 
                 $results["DNS 角色已安裝"] = $dnsInstalled
                 if (-not $dnsInstalled) {
-                    # DNS not installed: zone transfer check is N/A (warning)
-                    $results["Zone Transfer Disabled"] = $null
+                    $results["Zone Transfer Disabled"] = $false
                 } else {
                     try {
                         $zones = Get-DnsServerZone -ErrorAction Stop | Where-Object {
@@ -494,7 +482,7 @@ function global:Verify-Challenge {
                 $results["EnableScriptBlockLogging = 1"] = ($null -ne $v -and [int]$v -eq 1)
             }
 
-            # --- 23. Windows Update (stricter: must pass BOTH service AND registry) ---
+            # --- 23. Windows Update (stricter: service running + GPO auto update configured) ---
             23 {
                 $svcOk = $false
                 try {
@@ -503,13 +491,11 @@ function global:Verify-Challenge {
                 } catch {
                     $svcOk = $false
                 }
-                $results["wuauserv Running"] = $svcOk
+                $results["wuauserv 服務執行中"] = $svcOk
 
-                $regVal = Get-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "NoAutoUpdate"
-                # Must explicitly NOT be 1. If key doesn't exist, that's OK (auto-update default).
-                # But we require the key to exist with value 0 to be sure.
-                $regOk = ($null -eq $regVal -or [int]$regVal -ne 1)
-                $results["NoAutoUpdate != 1 (Registry)"] = $regOk
+                # AUOptions=4 means "Auto download and schedule install" (must be explicitly set)
+                $auOpt = Get-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "AUOptions"
+                $results["已設定自動更新 (GPO AUOptions = 4)"] = ($null -ne $auOpt -and [int]$auOpt -eq 4)
             }
 
             # --- 24. registry security ---
