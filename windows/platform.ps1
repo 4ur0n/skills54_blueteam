@@ -24,35 +24,35 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 $script:Challenges = @(
     # -- Category 1: historical must-know --
-    @{ Id=1;  Title="密碼策略";         Category="歷屆必考"; Color="#ff6600"; Checks=@("MinimumPasswordLength >= 8","PasswordComplexity = 1","MaximumPasswordAge <= 90","PasswordHistorySize >= 5") }
+    @{ Id=1;  Title="密碼策略";         Category="歷屆必考"; Color="#ff6600"; Checks=@("MinimumPasswordLength >= 8","PasswordComplexity = 1","MaximumPasswordAge <= 90","PasswordHistorySize >= 5","MinimumPasswordAge >= 2","登入 Banner 訊息已設定 (LegalNoticeCaption)") }
     @{ Id=2;  Title="帳戶鎖定原則";     Category="歷屆必考"; Color="#ff6600"; Checks=@("LockoutBadCount 3-5","ResetLockoutCount >= 30","LockoutDuration >= 30") }
-    @{ Id=3;  Title="安全性選項";       Category="歷屆必考"; Color="#ff6600"; Checks=@("DisableCAD = 0","DontDisplayLastUserName = 1","PasswordExpiryWarning >= 7") }
-    @{ Id=4;  Title="SMB 安全";         Category="歷屆必考"; Color="#ff6600"; Checks=@("伺服器端強制簽章 RequireSecuritySignature","用戶端強制簽章 EnableSecuritySignature","SMBv1 已停用","GPO 伺服器簽章原則","GPO 用戶端簽章原則") }
+    @{ Id=3;  Title="安全性選項";       Category="歷屆必考"; Color="#ff6600"; Checks=@("DisableCAD = 0","DontDisplayLastUserName = 1","PasswordExpiryWarning >= 7","關機: 不允許未登入關機","不允許 SAM 匿名列舉") }
+    @{ Id=4;  Title="SMB 安全";         Category="歷屆必考"; Color="#ff6600"; Checks=@("伺服器端強制簽章 RequireSecuritySignature","用戶端強制簽章 EnableSecuritySignature","SMBv1 已停用","GPO 伺服器簽章原則","GPO 用戶端簽章原則","SMB 加密已啟用 (EncryptData)") }
     @{ Id=5;  Title="稽核策略";         Category="歷屆必考"; Color="#ff6600"; Checks=@("Account Logon Audit","Logon/Logoff Audit","Object Access Audit","Policy Change Audit","System Audit") }
-    @{ Id=6;  Title="Windows 防火牆";   Category="歷屆必考"; Color="#ff6600"; Checks=@("Domain 設定檔已啟用","Domain 預設拒絕輸入","Private 設定檔已啟用","Private 預設拒絕輸入","Public 設定檔已啟用","Public 預設拒絕輸入") }
+    @{ Id=6;  Title="Windows 防火牆";   Category="歷屆必考"; Color="#ff6600"; Checks=@("Domain 設定檔已啟用且記錄已開啟","Domain 預設拒絕輸入","Private 設定檔已啟用且記錄已開啟","Private 預設拒絕輸入","Public 設定檔已啟用且記錄已開啟","Public 預設拒絕輸入") }
     @{ Id=7;  Title="Windows Installer"; Category="歷屆必考"; Color="#ff6600"; Checks=@("DisablePatchUninstall = 1") }
     @{ Id=8;  Title="權限配置";         Category="歷屆必考"; Color="#ff6600"; Checks=@("C:\\SensitiveData 資料夾存在","無 Everyone:FullControl","擁有者為 Administrators") }
 
     # -- Category 2: high probability --
-    @{ Id=9;  Title="遠端桌面安全";     Category="高機率"; Color="#00d4ff"; Checks=@("NLA 網路等級驗證已啟用","安全層級 >= SSL (SecurityLayer >= 2)","加密層級 = 高 (MinEncryptionLevel >= 3)","限制空白密碼遠端登入") }
+    @{ Id=9;  Title="遠端桌面安全";     Category="高機率"; Color="#00d4ff"; Checks=@("NLA 網路等級驗證已啟用","安全層級 >= SSL (SecurityLayer >= 2)","加密層級 = 高 (MinEncryptionLevel >= 3)","限制空白密碼遠端登入","閒置逾時已設定 (MaxIdleTime)","加密等級已透過 GPO 設定") }
     @{ Id=10; Title="事件記錄檔";       Category="高機率"; Color="#00d4ff"; Checks=@("Security Log >= 200 MB","Application Log >= 100 MB","System Log >= 100 MB","保留原則已設定為不覆寫") }
     @{ Id=11; Title="AD 帳號管理";      Category="高機率"; Color="#00d4ff"; Checks=@("Guest Account Disabled","No Extra Domain Admins","Administrator Renamed") }
     # Windows Defender 已移除（Server 2022 無此功能）
-    @{ Id=13; Title="服務管理";         Category="高機率"; Color="#00d4ff"; Checks=@("RemoteRegistry Stopped","Telnet Stopped","Other Risky Services") }
+    @{ Id=13; Title="服務管理";         Category="高機率"; Color="#00d4ff"; Checks=@("RemoteRegistry Stopped","Telnet Stopped","Other Risky Services","Print Spooler 已停用","Windows Remote Management 已停用") }
 
     # -- Category 3: medium probability --
-    @{ Id=14; Title="UAC";              Category="中等機率"; Color="#a855f7"; Checks=@("EnableLUA = 1","ConsentPromptBehaviorAdmin = 2") }
+    @{ Id=14; Title="UAC";              Category="中等機率"; Color="#a855f7"; Checks=@("EnableLUA = 1","ConsentPromptBehaviorAdmin = 2","FilterAdministratorToken = 1") }
     @{ Id=15; Title="排程任務";         Category="中等機率"; Color="#a855f7"; Checks=@("No Suspicious Tasks") }
-    @{ Id=16; Title="共享資料夾";       Category="中等機率"; Color="#a855f7"; Checks=@("無 Everyone:FullControl 共享","無多餘的自訂共享") }
+    @{ Id=16; Title="共享資料夾";       Category="中等機率"; Color="#a855f7"; Checks=@("無 Everyone:FullControl 共享","無多餘的自訂共享","已停用管理共享 (AutoShareServer)") }
     @{ Id=17; Title="IIS 安全";         Category="中等機率"; Color="#a855f7"; Checks=@("IIS 角色已安裝","目錄瀏覽已停用") }
-    @{ Id=18; Title="DNS 安全";         Category="中等機率"; Color="#a855f7"; Checks=@("DNS 角色已安裝","Zone Transfer Disabled") }
+    @{ Id=18; Title="DNS 安全";         Category="中等機率"; Color="#a855f7"; Checks=@("DNS 角色已安裝","Zone Transfer Disabled","已停用遞迴查詢 (Recursion)") }
     @{ Id=19; Title="LDAP 安全";        Category="中等機率"; Color="#a855f7"; Checks=@("LDAPServerIntegrity >= 2") }
     @{ Id=20; Title="網路驗證等級";     Category="中等機率"; Color="#a855f7"; Checks=@("LmCompatibilityLevel >= 3") }
 
     # -- Category 4: low probability --
     @{ Id=22; Title="PowerShell 日誌";  Category="低機率"; Color="#666666"; Checks=@("EnableScriptBlockLogging = 1") }
-    @{ Id=23; Title="Windows Update";   Category="低機率"; Color="#666666"; Checks=@("wuauserv 服務執行中","已設定自動更新 (GPO AUOptions = 4)") }
-    @{ Id=24; Title="登錄檔安全";       Category="低機率"; Color="#666666"; Checks=@("NoDriveTypeAutoRun = 255","NoLMHash = 1","DisableCAD = 0") }
+    @{ Id=23; Title="Windows Update";   Category="低機率"; Color="#666666"; Checks=@("wuauserv 服務執行中","已設定自動更新 (GPO AUOptions = 4)","WSUS 或自動更新排程已設定") }
+    @{ Id=24; Title="登錄檔安全";       Category="低機率"; Color="#666666"; Checks=@("NoDriveTypeAutoRun = 255","NoLMHash = 1","DisableCAD = 0","已啟用 NtfsDisable8dot3NameCreation") }
 )
 
 # Runtime state per challenge
@@ -131,6 +131,12 @@ function global:Verify-Challenge {
 
                 $v = Get-SeceditValue "PasswordHistorySize"
                 $results["PasswordHistorySize >= 5"] = ($null -ne $v -and [int]$v -ge 5)
+
+                $v = Get-SeceditValue "MinimumPasswordAge"
+                $results["MinimumPasswordAge >= 2"] = ($null -ne $v -and [int]$v -ge 2)
+
+                $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "LegalNoticeCaption"
+                $results["登入 Banner 訊息已設定 (LegalNoticeCaption)"] = ($null -ne $v -and $v.ToString().Trim() -ne "")
             }
 
             # --- 2. account lockout ---
@@ -156,6 +162,12 @@ function global:Verify-Challenge {
                 $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" "PasswordExpiryWarning"
                 if ($null -eq $v) { $v = 5 }
                 $results["PasswordExpiryWarning >= 7"] = ([int]$v -ge 7)
+
+                $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "ShutdownWithoutLogon"
+                $results["關機: 不允許未登入關機"] = ($null -ne $v -and [int]$v -eq 0)
+
+                $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "RestrictAnonymousSAM"
+                $results["不允許 SAM 匿名列舉"] = ($null -ne $v -and [int]$v -eq 1)
             }
 
             # --- 4. SMB security (stricter: check GPO signing via secedit) ---
@@ -165,10 +177,12 @@ function global:Verify-Challenge {
                     $results["伺服器端強制簽章 RequireSecuritySignature"] = ($smb.RequireSecuritySignature -eq $true)
                     $results["用戶端強制簽章 EnableSecuritySignature"] = ($smb.EnableSecuritySignature -eq $true)
                     $results["SMBv1 已停用"] = ($smb.EnableSMB1Protocol -eq $false)
+                    $results["SMB 加密已啟用 (EncryptData)"] = ($smb.EncryptData -eq $true)
                 } catch {
                     $results["伺服器端強制簽章 RequireSecuritySignature"] = $null
                     $results["用戶端強制簽章 EnableSecuritySignature"] = $null
                     $results["SMBv1 已停用"] = $null
+                    $results["SMB 加密已啟用 (EncryptData)"] = $null
                 }
                 # GPO server signing
                 $v1 = Get-SeceditValue "MACHINE\\System\\CurrentControlSet\\Services\\LanManServer\\Parameters\\RequireSecuritySignature"
@@ -206,18 +220,18 @@ function global:Verify-Challenge {
                 }
             }
 
-            # --- 6. firewall (stricter: also check DefaultInboundAction = Block) ---
+            # --- 6. firewall (stricter: also check DefaultInboundAction = Block AND logging enabled) ---
             6 {
                 try {
                     $profiles = Get-NetFirewallProfile -ErrorAction Stop
                     foreach ($p in @("Domain","Private","Public")) {
                         $prof = $profiles | Where-Object { $_.Name -eq $p }
-                        $results["$p 設定檔已啟用"] = ($prof -and $prof.Enabled -eq $true)
+                        $results["$p 設定檔已啟用且記錄已開啟"] = ($prof -and $prof.Enabled -eq $true -and $prof.LogBlocked -eq $true)
                         $results["$p 預設拒絕輸入"] = ($prof -and $prof.DefaultInboundAction -eq "Block")
                     }
                 } catch {
                     foreach ($p in @("Domain","Private","Public")) {
-                        $results["$p 設定檔已啟用"] = $null
+                        $results["$p 設定檔已啟用且記錄已開啟"] = $null
                         $results["$p 預設拒絕輸入"] = $null
                     }
                 }
@@ -265,6 +279,12 @@ function global:Verify-Challenge {
 
                 $blank = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "LimitBlankPasswordUse"
                 $results["限制空白密碼遠端登入"] = ($null -eq $blank -or [int]$blank -eq 1)
+
+                $idle = Get-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" "MaxIdleTime"
+                $results["閒置逾時已設定 (MaxIdleTime)"] = ($null -ne $idle -and [int]$idle -gt 0)
+
+                $gpoEnc = Get-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" "MinEncryptionLevel"
+                $results["加密等級已透過 GPO 設定"] = ($null -ne $gpoEnc -and [int]$gpoEnc -ge 3)
             }
 
             # --- 10. event log (stricter: check 3 logs + retention) ---
@@ -307,7 +327,7 @@ function global:Verify-Challenge {
                 try {
                     Import-Module ActiveDirectory -ErrorAction Stop
                     $admins = Get-ADGroupMember "Domain Admins" -ErrorAction Stop
-                    $results["No Extra Domain Admins"] = ($admins.Count -le 2)
+                    $results["No Extra Domain Admins"] = ($admins.Count -le 1)
                 } catch {
                     $results["No Extra Domain Admins"] = $null
                 }
@@ -347,6 +367,22 @@ function global:Verify-Challenge {
                     } catch { }
                 }
                 $results["Other Risky Services"] = $allGood
+
+                # Print Spooler - running by default, known PrintNightmare vulnerability
+                try {
+                    $s = Get-Service -Name "Spooler" -ErrorAction Stop
+                    $results["Print Spooler 已停用"] = ($s.Status -eq "Stopped" -and $s.StartType -eq "Disabled")
+                } catch {
+                    $results["Print Spooler 已停用"] = $true
+                }
+
+                # WinRM - running by default on Server
+                try {
+                    $s = Get-Service -Name "WinRM" -ErrorAction Stop
+                    $results["Windows Remote Management 已停用"] = ($s.Status -eq "Stopped" -and $s.StartType -eq "Disabled")
+                } catch {
+                    $results["Windows Remote Management 已停用"] = $true
+                }
             }
 
             # --- 14. UAC (stricter: also check ConsentPromptBehaviorAdmin = 2) ---
@@ -356,6 +392,9 @@ function global:Verify-Challenge {
 
                 $v2 = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "ConsentPromptBehaviorAdmin"
                 $results["ConsentPromptBehaviorAdmin = 2"] = ($null -ne $v2 -and [int]$v2 -eq 2)
+
+                $v3 = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "FilterAdministratorToken"
+                $results["FilterAdministratorToken = 1"] = ($null -ne $v3 -and [int]$v3 -eq 1)
             }
 
             # --- 15. scheduled tasks ---
@@ -395,6 +434,9 @@ function global:Verify-Challenge {
                     $results["無 Everyone:FullControl 共享"] = $false
                     $results["無多餘的自訂共享"] = $false
                 }
+                # Check 3: administrative shares disabled (AutoShareServer not set by default)
+                $v = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" "AutoShareServer"
+                $results["已停用管理共享 (AutoShareServer)"] = ($null -ne $v -and [int]$v -eq 0)
             }
 
             # --- 17. IIS security (check if installed first) ---
@@ -436,6 +478,7 @@ function global:Verify-Challenge {
                 $results["DNS 角色已安裝"] = $dnsInstalled
                 if (-not $dnsInstalled) {
                     $results["Zone Transfer Disabled"] = $false
+                    $results["已停用遞迴查詢 (Recursion)"] = $false
                 } else {
                     try {
                         $zones = Get-DnsServerZone -ErrorAction Stop | Where-Object {
@@ -451,6 +494,13 @@ function global:Verify-Challenge {
                         $results["Zone Transfer Disabled"] = $allGood
                     } catch {
                         $results["Zone Transfer Disabled"] = $null
+                    }
+                    # Recursion should be disabled on authoritative DNS (enabled by default)
+                    try {
+                        $rec = Get-DnsServerRecursion -ErrorAction Stop
+                        $results["已停用遞迴查詢 (Recursion)"] = ($rec.Enable -eq $false)
+                    } catch {
+                        $results["已停用遞迴查詢 (Recursion)"] = $null
                     }
                 }
             }
@@ -496,6 +546,10 @@ function global:Verify-Challenge {
                 # AUOptions=4 means "Auto download and schedule install" (must be explicitly set)
                 $auOpt = Get-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "AUOptions"
                 $results["已設定自動更新 (GPO AUOptions = 4)"] = ($null -ne $auOpt -and [int]$auOpt -eq 4)
+
+                # ScheduledInstallDay must be explicitly set (not present by default)
+                $sched = Get-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "ScheduledInstallDay"
+                $results["WSUS 或自動更新排程已設定"] = ($null -ne $sched)
             }
 
             # --- 24. registry security ---
@@ -508,6 +562,10 @@ function global:Verify-Challenge {
 
                 $v = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "DisableCAD"
                 $results["DisableCAD = 0"] = ($null -ne $v -and [int]$v -eq 0)
+
+                # NtfsDisable8dot3NameCreation: default is 2 (volume-dependent), require 1 (disabled)
+                $v = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" "NtfsDisable8dot3NameCreation"
+                $results["已啟用 NtfsDisable8dot3NameCreation"] = ($null -ne $v -and [int]$v -eq 1)
             }
 
             default { $results["Unknown Challenge"] = $null }
